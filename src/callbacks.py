@@ -419,7 +419,7 @@ class SaveConfigCallback(BaseCallback):
         branch = repo.active_branch
         sha = repo.head.object.hexsha
         with open(path, "w") as f:
-            f.write()
+            f.write(f"{branch}+{sha}")
 
     def _on_step(self) -> bool:
         return super()._on_step()
