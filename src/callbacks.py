@@ -413,7 +413,7 @@ class SaveConfigCallback(BaseCallback):
         self.parser.save(self.cfg, path, format="yaml", skip_none=False, overwrite=True, multifile=False)
 
         repo = Repo(".")
-        repo.create_tag(self.logger.get_dir())
+        repo.create_tag(self.logger.get_dir().replace("\\", "/"))
 
         path = os.path.join(self.logger.get_dir(), "git_info")
         branch = repo.active_branch
