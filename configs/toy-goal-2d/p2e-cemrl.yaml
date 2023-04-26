@@ -35,6 +35,7 @@ callback:
     class_path: src.callbacks.EvalInLogFolderCallback
     init_args:
       log_path: eval
+      n_eval_episodes: ${.eval_env.init_args.venv.init_args.venv.init_args.num_envs}
       eval_env:
         class_path: src.cemrl.wrappers.CEMRLHistoryWrapper
         init_args:
@@ -57,6 +58,7 @@ callback:
     init_args:
       log_path: p2e-eval
       eval_freq: 100
+      n_eval_episodes: ${callback.eval_callback.init_args.eval_env.init_args.venv.init_args.venv.init_args.num_envs}
       callback_on_new_best:
         class_path: src.callbacks.RecordVideo
         init_args:
