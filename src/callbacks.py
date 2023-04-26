@@ -18,7 +18,7 @@ from src.cemrl.types import CEMRLObsTensorDict
 from src.env.wrappers.heatmap import HeatmapWrapper
 from src.plan2explore.policies import Plan2ExplorePolicy
 from stable_baselines3.common.off_policy_algorithm import OffPolicyAlgorithm
-from git import Repo
+from git.repo import Repo
 from stable_baselines3.common.vec_env import (
     VecEnvWrapper,
     unwrap_vec_wrapper,
@@ -73,8 +73,8 @@ class Plan2ExploreEvalCallback(EvalInLogFolderCallback):
         self.eval_model = eval_model
 
     def _init_callback(self) -> None:
-        if self.eval_model is not None:
-            self.model = self.eval_model
+        if self.eval_model is None:
+            self.eval_model = self.model
         return super()._init_callback()
 
     """Modified EvalCallback that supports the Plan2ExplorePolicy.
@@ -85,15 +85,15 @@ class Plan2ExploreEvalCallback(EvalInLogFolderCallback):
     """
 
     def _on_step(self) -> bool:
-        assert self.model is not None and isinstance(self.model.policy, Plan2ExplorePolicy)
-        self.model.policy._is_collecting = False
+        assert self.eval_model is not None and isinstance(self.eval_model.policy, Plan2ExplorePolicy)
+        self.eval_model.policy._is_collecting = False
         continue_training = True
 
         if self.eval_freq > 0 and self.n_calls % self.eval_freq == 0:
             # Sync training and eval env if there is VecNormalize
-            if self.model.get_vec_normalize_env() is not None:
+            if self.eval_model.get_vec_normalize_env() is not None:
                 try:
-                    sync_envs_normalization(self.training_env, self.eval_env)
+                    sync_envs_normalization(self.eval_model.env, self.eval_env)
                 except AttributeError as e:
                     raise AssertionError(
                         "Training and eval env are not wrapped the same way, "
@@ -105,7 +105,7 @@ class Plan2ExploreEvalCallback(EvalInLogFolderCallback):
             self._is_success_buffer = []
 
             episode_rewards, episode_lengths = evaluate_policy(
-                self.model,
+                self.eval_model,
                 self.eval_env,
                 n_eval_episodes=self.n_eval_episodes,
                 render=self.render,
@@ -159,7 +159,7 @@ class Plan2ExploreEvalCallback(EvalInLogFolderCallback):
                 if self.verbose >= 1:
                     print("New best mean reward!")
                 if self.best_model_save_path is not None:
-                    self.model.save(os.path.join(self.best_model_save_path, "best_model"))
+                    self.eval_model.save(os.path.join(self.best_model_save_path, "best_model"))
                 self.best_mean_reward = mean_reward
                 # Trigger callback on new best model, if needed
                 if self.callback_on_new_best is not None:
@@ -169,7 +169,7 @@ class Plan2ExploreEvalCallback(EvalInLogFolderCallback):
             if self.callback is not None:
                 continue_training = continue_training and self._on_event()
 
-        self.model.policy._is_collecting = True
+        self.eval_model.policy._is_collecting = True
         return continue_training
 
 
@@ -398,7 +398,7 @@ class RecordVideo(BaseCallback):
             return_episode_rewards=True,
             warn=parent.warn,
         )
-        video_env.close_video_recorder()
+        video_env.close()
         return True
 
 
