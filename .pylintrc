@@ -1,0 +1,7 @@
+[MASTER]
+init-hook='import sys; sys.path.append("C:\\Users\\samue\\Documents\\GitHub\\thesis")'
+extension-pkg-whitelist=numpy,torch
+
+[TYPECHECK]
+ignored-modules=numpy,torch
+ignored-classes=numpy,torch

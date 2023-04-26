@@ -1,0 +1,25 @@
+name: thesis
+channels:
+  - anaconda
+  - pytorch
+  - nvidia
+  - conda-forge
+dependencies:
+  - python=3.10
+  - pytorch=2.0.0
+  - torchvision
+  - pytorch-cuda=11.8
+  - pytorch-lightning
+  - tensorboard
+  - tqdm
+  - rich
+  - opencv
+  - pip
+  - pip:
+    - stable-baselines3
+    - jsonargparse[signatures]
+    # Developer Dependencies
+    - mypy
+    - black
+    - pylint
+    - pydocstyle

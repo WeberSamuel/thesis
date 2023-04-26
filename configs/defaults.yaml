@@ -1,0 +1,6 @@
+A:
+  class_path: test.A
+  init_args: {}
+B:
+  class_path: test.B
+  init_args: {}

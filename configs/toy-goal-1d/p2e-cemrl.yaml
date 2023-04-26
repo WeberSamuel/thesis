@@ -1,0 +1,13 @@
+algorithm:
+  - class_path: src.cemrl.cemrl.CEMRL
+  - init_args:
+    
+env:
+  - class_path: src.env.toy_goal_env.ToyGoal1DEnv
+  - init_args:
+    - venv:
+      - class_path: src.env.toy_goal_env.ToyGoalEnv
+      - init_args:
+        - num_envs: 256
+        - goal_sampler:
+          - class_path: src.env.samplers.random_box_sampler.RandomBoxSampler

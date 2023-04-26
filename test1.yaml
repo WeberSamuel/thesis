@@ -1,0 +1,6 @@
+Node:
+  class_path: Node
+  init_args:
+    sub_class:
+      class_path: Leaf
+      init_args: {}
