@@ -45,9 +45,10 @@ class CEMRL(OffPolicyAlgorithm):
         env: GymEnv | VecEnv | VecEnvWrapper,
         replay_buffer: ReplayBuffer,
         encoder_window: int = 30,
-        encoder_gradient_steps: float | Schedule = 0.5,
-        policy_gradient_steps: float | Schedule = 0.5,
+        encoder_gradient_steps: float | Schedule = 1,
+        policy_gradient_steps: float | Schedule = 1,
         extension: Optional[CEMRLExtension] = None,
+        reconstruction_sample_reuse:int=20,
         learning_starts: int = 100,
         batch_size: int = 256,
         train_freq: Union[int, Tuple[int, str]] = (1, "step"),
@@ -96,7 +97,7 @@ class CEMRL(OffPolicyAlgorithm):
         self.policy_gradient_steps = get_schedule_fn(policy_gradient_steps)
         self.extension = extension if extension is not None else CEMRLExtension()
         self.encoder_window = encoder_window
-        self.scaler = th.cuda.amp.GradScaler()
+        self.reconstruction_sample_reuse = reconstruction_sample_reuse
         self.replay_buffer = replay_buffer
         if _init_setup_model:
             self._setup_model()
@@ -123,6 +124,7 @@ class CEMRL(OffPolicyAlgorithm):
 
         self.extension._init_extension(self)
 
+        self.scaler = th.cuda.amp.GradScaler()
         return result
 
     def train(self, gradient_steps: int, batch_size: int) -> None:
@@ -140,25 +142,18 @@ class CEMRL(OffPolicyAlgorithm):
         encoder_steps, policy_steps = self._get_gradient_steps(gradient_steps)
 
         for j in range(encoder_steps):
-            self.reconstruction_training_step(batch_size, 20)
+            self.reconstruction_training_step(batch_size)
         self.policy.policy_algorithm.train(policy_steps, batch_size)
 
-    def _get_gradient_steps(self, gradient_steps: int):
-        encoder_steps_factor = self.encoder_gradient_steps(self._current_progress_remaining)
-        policy_steps_factor = self.policy_gradient_steps(self._current_progress_remaining)
-        normalization_factor = encoder_steps_factor + policy_steps_factor
+    def _get_gradient_steps(self, gradient_steps):
+        encoder_steps = int(self.encoder_gradient_steps(self._current_progress_remaining))
+        policy_steps = int(self.policy_gradient_steps(self._current_progress_remaining))
 
-        encoder_steps_factor = encoder_steps_factor / normalization_factor
-        policy_steps_factor = policy_steps_factor / normalization_factor
-
-        encoder_steps = int(gradient_steps * encoder_steps_factor)
-        policy_steps = int(gradient_steps * policy_steps_factor)
-
-        self.logger.record("encoder_steps", encoder_steps)
-        self.logger.record("policy_steps", policy_steps)
+        self.logger.record("encoder_steps", encoder_steps * gradient_steps)
+        self.logger.record("policy_steps", policy_steps * gradient_steps)
         return encoder_steps, policy_steps
 
-    def reconstruction_training_step(self, batch_size: int, reuse_steps: int):
+    def reconstruction_training_step(self, batch_size: int):
         """Perform a training step for the encoder and decoder.
 
         The overall objective due to the generative model is:
@@ -186,7 +181,7 @@ class CEMRL(OffPolicyAlgorithm):
         next_observations = next_observations["observation"]
 
         # Forward pass through encoder
-        for i in range(reuse_steps):
+        for i in range(self.reconstruction_sample_reuse):
             with th.autocast("cuda"):
                 encoder_input = get_random_encoder_window_samples(samples, self.encoder_window)
                 y_distribution, z_distributions = self.policy.encoder.encode(
