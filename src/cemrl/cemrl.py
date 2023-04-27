@@ -1,24 +1,24 @@
 """This file contains the CEMRL algorithm for stable-baselines3."""
 from typing import List, Optional, Tuple, Union, cast
+
+import torch as th
 from stable_baselines3 import SAC
-from stable_baselines3.common.off_policy_algorithm import OffPolicyAlgorithm
-from stable_baselines3.common.utils import get_schedule_fn
-from stable_baselines3.common.type_aliases import MaybeCallback, GymEnv
+from stable_baselines3.common.buffers import DictReplayBuffer, ReplayBuffer
 from stable_baselines3.common.callbacks import BaseCallback
-from stable_baselines3.common.vec_env import unwrap_vec_wrapper, VecEnv, VecEnvWrapper
-from stable_baselines3.common.type_aliases import Schedule
-from src.cemrl.networks import Encoder
-from src.cli import DummyPolicy, DummyReplayBuffer
+from stable_baselines3.common.noise import ActionNoise
+from stable_baselines3.common.off_policy_algorithm import OffPolicyAlgorithm
+from stable_baselines3.common.type_aliases import GymEnv, MaybeCallback, Schedule
+from stable_baselines3.common.utils import get_schedule_fn
+from stable_baselines3.common.vec_env import VecEnv, VecEnvWrapper, unwrap_vec_wrapper
+
+from src.cemrl.buffers import CEMRLPolicyBuffer, EpisodicBuffer
 from src.cemrl.extensions import CEMRLExtension
-from src.cemrl.buffers import CEMRLPolicyBuffer
+from src.cemrl.networks import Encoder
 from src.cemrl.policies import CEMRLPolicy
 from src.cemrl.types import CEMRLObsTensorDict
-from src.cemrl.wrappers import CEMRLPolicyWrapper, CEMRLHistoryWrapper
-from stable_baselines3.common.noise import ActionNoise
-from stable_baselines3.common.buffers import ReplayBuffer, DictReplayBuffer
-import torch as th
+from src.cemrl.wrappers import CEMRLHistoryWrapper, CEMRLPolicyWrapper
+from src.cli import DummyPolicy, DummyReplayBuffer
 from src.utils import get_random_encoder_window_samples
-from src.cemrl.buffers import CEMRLBuffer, CEMRLPolicyBuffer
 
 
 class CEMRLSACPolicy(SAC):
@@ -26,7 +26,7 @@ class CEMRLSACPolicy(SAC):
         self,
         env: VecEnv | VecEnvWrapper,
         cemrl_policy_encoder: Encoder,
-        cemrl_replay_buffer: CEMRLBuffer,
+        cemrl_replay_buffer: EpisodicBuffer,
         encoder_window: int,
         **kwargs
     ):
@@ -48,7 +48,7 @@ class CEMRL(OffPolicyAlgorithm):
         encoder_gradient_steps: float | Schedule = 1,
         policy_gradient_steps: float | Schedule = 1,
         extension: Optional[CEMRLExtension] = None,
-        reconstruction_sample_reuse:int=20,
+        reconstruction_sample_reuse: int = 20,
         learning_starts: int = 100,
         batch_size: int = 256,
         train_freq: Union[int, Tuple[int, str]] = (1, "step"),

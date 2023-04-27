@@ -1,70 +1,108 @@
 """This file contains the Replaybuffer Wrapper used by cemrl to train the encoder."""
-from typing import Any, Dict, List, Optional, Union, cast
-from gym import spaces
+from typing import Any, Dict, List, Optional, Union
+
 import numpy as np
 import torch as th
-from stable_baselines3.common.buffers import DictReplayBuffer, ReplayBuffer
-from stable_baselines3.common.type_aliases import ReplayBufferSamples, DictReplayBufferSamples, TensorDict
-from stable_baselines3.common.vec_env import VecNormalize, VecEnv, VecEnvWrapper
+from gym import spaces
+from stable_baselines3.common.buffers import DictReplayBuffer
+from stable_baselines3.common.type_aliases import DictReplayBufferSamples, ReplayBufferSamples
+from stable_baselines3.common.vec_env import VecEnv, VecEnvWrapper, VecNormalize, unwrap_vec_wrapper
+
 from src.cemrl.types import CEMRLObsTensorDict, CEMRLSacPolicyTensorInput
-from src.utils import remove_dim_from_space, apply_function_to_type, get_random_encoder_window_samples
-from torch.utils.data import default_collate
+from src.cemrl.wrappers import CEMRLHistoryWrapper
+from src.utils import get_random_encoder_window_samples, remove_dim_from_space
 
 
-class EpisodicBuffer:
-    def __init__(self, buffer_size: int, obs_shape, n_envs: int, num_tasks: int, max_episode_length: int = 200) -> None:
-        self.episode_lengths = np.zeros(buffer_size, dtype=int)
-        self.episodes = [[] for _ in range(num_tasks)]
-        self.episodes_in_progress = np.zeros((buffer_size, max_episode_length, *obs_shape))
-        self.env_pos = np.zeros(buffer_size, dtype=int)
-
-    def add(
-        self,
-        obs: np.ndarray,
-        next_obs: np.ndarray,
-        action: np.ndarray,
-        reward: np.ndarray,
-        done: np.ndarray,
-        infos: List[Dict[str, Any]],
-    ) -> None:
-        pass
-
-
-class CEMRLBuffer(DictReplayBuffer):
+class EpisodicBuffer(DictReplayBuffer):
     def __init__(
         self,
         env: VecEnvWrapper | VecEnv,
-        buffer_size: int = 10_000_000,
+        num_episodes_per_task: int = 100_000,
         device: Union[th.device, str] = "auto",
         optimize_memory_usage: bool = False,
         handle_timeout_termination: bool = True,
-        link_episodes=True,
-    ):
+        link_episodes: int = 3,
+        max_episode_length: int = 200,
+    ) -> None:
         assert isinstance(env.observation_space, spaces.Dict)
-        obs_spaces = {
-            "observation": env.unwrapped.observation_space,
-            "goal": remove_dim_from_space(env.observation_space.spaces["goal"], 0),  # type: ignore
-            "goal_idx": remove_dim_from_space(env.observation_space.spaces["goal_idx"], 0),  # type: ignore
-            "task": remove_dim_from_space(env.observation_space.spaces["task"], 0),  # type: ignore
-        }
+
+        num_tasks = int(env.observation_space.spaces["goal_idx"].high[0, 0])  # type: ignore
+        self.episodes = np.empty((num_tasks, num_episodes_per_task), dtype=object)
+        self.episode_pos = np.zeros(num_tasks, dtype=int)
+        self.episode_full = np.zeros(num_tasks, dtype=bool)
+        self.episode_length = np.zeros_like(self.episodes, dtype=int)
+        self.max_num_episodes_per_task = num_episodes_per_task
+        self.link_episodes = link_episodes
+
+        self.history_wrapper = unwrap_vec_wrapper(env, CEMRLHistoryWrapper)
+        if self.history_wrapper is None:
+            observation_space = env.observation_space
+        else:
+            observation_space = spaces.Dict(
+                {
+                    "observation": self.history_wrapper.original_obs_space,
+                    "goal": remove_dim_from_space(env.observation_space.spaces["goal"], 0),  # type: ignore
+                    "goal_idx": remove_dim_from_space(env.observation_space.spaces["goal_idx"], 0),  # type: ignore
+                    "task": remove_dim_from_space(env.observation_space.spaces["task"], 0),  # type: ignore
+                }
+            )
+
         super().__init__(
-            buffer_size,
-            spaces.Dict(obs_spaces),
+            (max_episode_length + 1) * env.num_envs,
+            observation_space,
             env.action_space,
             device,
             env.num_envs,
             optimize_memory_usage,
             handle_timeout_termination,
         )
-        self.episodes = np.zeros((10_000, 2), dtype=int)
-        self.episodes_env = np.zeros(10_000, dtype=int)
-        self.episodes_valid = np.zeros(10_000, dtype=bool)
-        self.episodes_goal_idx = np.zeros(10_000, dtype=int)
-        self.env_current_episode_idx = np.arange(0, env.num_envs, dtype=int)
-        self.env_episode_starting_pos = np.zeros(env.num_envs, dtype=int)
-        self.num_episodes = 0
-        self.all_episodes_valid = False
-        self.link_episodes = link_episodes
+        self.pos = np.zeros(env.num_envs, dtype=int)
+
+    def _strip_unnecessary_data_from_obs(self, obs: Dict[str, np.ndarray]):
+        return {
+            "observation": obs["observation"][:, -1],
+            "goal": obs["goal"][:, -1],
+            "goal_idx": obs["goal_idx"][:, -1],
+            "task": obs["task"][:, -1],
+        }
+
+    def size(self) -> int:
+        return self.episode_length.sum()
+
+    def _original_add_without_updating_pos(
+        self,
+        obs: Dict[str, np.ndarray],
+        next_obs: Dict[str, np.ndarray],
+        action: np.ndarray,
+        reward: np.ndarray,
+        done: np.ndarray,
+        infos: List[Dict[str, Any]],
+    ) -> None:  # pytype: disable=signature-mismatch
+        # Copy to avoid modification by reference
+        for key in self.observations.keys():
+            # Reshape needed when using multiple envs with discrete observations
+            # as numpy cannot broadcast (n_discrete,) to (n_discrete, 1)
+            if isinstance(self.observation_space.spaces[key], spaces.Discrete):  # type: ignore
+                obs[key] = obs[key].reshape((self.n_envs,) + self.obs_shape[key])  # type: ignore
+            self.observations[key][self.pos] = np.array(obs[key])
+
+        for key in self.next_observations.keys():
+            if isinstance(self.observation_space.spaces[key], spaces.Discrete):  # type: ignore
+                next_obs[key] = next_obs[key].reshape((self.n_envs,) + self.obs_shape[key])  # type: ignore
+            self.next_observations[key][self.pos] = np.array(next_obs[key]).copy()
+
+        # Reshape to handle multi-dim and discrete action spaces, see GH #970 #1392
+        action = action.reshape((self.n_envs, self.action_dim))
+
+        self.actions[self.pos] = np.array(action).copy()
+        self.rewards[self.pos] = np.array(reward).copy()
+        self.dones[self.pos] = np.array(done).copy()
+
+        if self.handle_timeout_termination:
+            self.timeouts[self.pos] = np.array([info.get("TimeLimit.truncated", False) for info in infos])
+
+        self.pos += 1
+        assert not np.any(self.pos == self.buffer_size), "Episode max length was not kept!"
 
     def add(
         self,
@@ -75,108 +113,74 @@ class CEMRLBuffer(DictReplayBuffer):
         done: np.ndarray,
         infos: List[Dict[str, Any]],
     ) -> None:
-        obs = {
-            "observation": obs["observation"][:, -1],
-            "goal": obs["goal"][:, -1],
-            "goal_idx": obs["goal_idx"][:, -1],
-            "task": obs["task"][:, -1],
-        }
-        next_obs = {
-            "observation": next_obs["observation"][:, -1],
-            "goal": next_obs["goal"][:, -1],
-            "goal_idx": next_obs["goal_idx"][:, -1],
-            "task": next_obs["task"][:, -1],
-        }
+        obs = self._strip_unnecessary_data_from_obs(obs)
+        next_obs = self._strip_unnecessary_data_from_obs(next_obs)
+        self._original_add_without_updating_pos(obs, next_obs, action, reward, done, infos)
 
-        if np.any(done):
-            finished_idx = np.where(done)[0]
-            finished_episodes_idx = self.env_current_episode_idx[finished_idx]
-            self.episodes[finished_episodes_idx, 1] = self.pos
-            self.episodes[finished_episodes_idx, 0] = self.env_episode_starting_pos[finished_idx]
-            self.episodes_env[finished_episodes_idx] = finished_idx
-            self.episodes_goal_idx[finished_episodes_idx] = obs["goal_idx"][finished_idx, 0]
-            self.num_episodes = (self.num_episodes + len(finished_idx)) % len(self.episodes)
-            self.env_current_episode_idx[finished_idx] = (np.arange(0, len(finished_idx)) + self.num_episodes) % len(
-                self.episodes
-            )
-            self.env_episode_starting_pos[finished_idx] = self.pos + 1
-            if self.num_episodes < len(finished_idx):
-                self.all_episodes_valid = True
+        finished_indices = np.where(done)[0]
+        if np.any(finished_indices):
+            tasks = obs["goal_idx"].squeeze(-1).astype(int)
+            for finished_idx, task in zip(finished_indices, tasks):
+                obs_indicies = np.arange(self.pos[finished_idx])
+                obs = {key: obs[obs_indicies, finished_idx, :].copy() for key, obs in self.observations.items()}
+                next_obs = {key: obs[obs_indicies, finished_idx, :].copy() for key, obs in self.next_observations.items()}
 
-            episodes_for_sort = self.episodes[:, 0]
-            if not self.all_episodes_valid:
-                episodes_for_sort = episodes_for_sort[: self.num_episodes]
-            self.sorted_episodes_start = np.argsort(episodes_for_sort)
+                self.episodes[task, self.episode_pos[task]] = (
+                    obs,
+                    next_obs,
+                    self.actions[obs_indicies, finished_idx].copy(),
+                    self.rewards[obs_indicies, finished_idx].copy(),
+                    self.dones[obs_indicies, finished_idx] * (1 - self.timeouts[obs_indicies, finished_idx]),
+                )
+                self.episode_length[task, self.episode_pos[task]] = self.pos[finished_idx]
+                self.pos[finished_idx] = 0
+                self.episode_pos[task] += 1
 
-        if self.full:
-            if self.sorted_episodes_start[0] < self.pos:
-                self.episodes[: len(self.episodes) if self.all_episodes_valid else self.num_episodes][
-                    self.sorted_episodes_start < self.pos, 0
-                ] = self.pos
-                self.episodes[self.episodes[:, 1] < self.episodes[:, 0]] = self.pos
+                if self.episode_pos[task] == self.max_num_episodes_per_task:
+                    self.episode_full[task] = True
+                    self.episode_pos[task] = 0
 
-        return super().add(obs, next_obs, action, reward, done, infos)
+    def sample(self, batch_size: int, env: VecNormalize | None = None) -> DictReplayBufferSamples:
+        available_episodes = np.where(self.episode_full, self.max_num_episodes_per_task, self.episode_pos)
+        available_tasks = np.where(available_episodes != 0)[0]
+        tasks = np.random.choice(available_tasks, batch_size)
+        episode_idx = np.random.randint(0, available_episodes[tasks], (self.link_episodes + 1, len(tasks)))
+        episode_length = self.episode_length[tasks, episode_idx]
+        shortest_length = np.sum(episode_length, axis=0).min()
 
-    def sample(self, batch_size: int, env: Optional[VecNormalize] = None) -> DictReplayBufferSamples:
-        upper_bound = len(self.episodes) if self.all_episodes_valid else self.num_episodes
-        episodes_idx = np.random.randint(0, upper_bound, size=(batch_size))
-        env_indices = self.episodes_env[episodes_idx]
-        episodes = self.episodes[episodes_idx]
+        obs_shape: Dict = self.obs_shape  # type: ignore
+        obs_space: Dict = self.observation_space  # type: ignore
 
-        if self.link_episodes:
-            goal_idx = self.episodes_goal_idx[episodes_idx]
-            episodes = np.zeros((batch_size, 4), dtype=int)
-            episodes[:, 0] = episodes_idx
+        obs = {k: np.zeros((batch_size, shortest_length, *v), dtype=obs_space[k].dtype) for k, v in obs_shape.items()}
+        next_obs = {k: np.zeros((batch_size, shortest_length, *v), dtype=obs_space[k].dtype) for k, v in obs_shape.items()}
+        actions = np.zeros((batch_size, shortest_length, self.action_dim), dtype=self.action_space.dtype)  # type: ignore
+        rewards = np.zeros((batch_size, shortest_length), dtype=np.float32)
+        dones = np.zeros((batch_size, shortest_length), dtype=np.float32)
 
-            for idx, linked in zip(goal_idx, episodes):
-                possible = np.where(self.episodes_goal_idx[:upper_bound] == idx)[0]
-                linked[1:] = np.random.choice(possible, 3)
+        for linked_episode in episode_idx:
+            pos = 0
+            remaining_length = shortest_length
+            for task, batch_idx in zip(tasks, linked_episode):
+                obs_, next_obs_, actions_, rewards_, dones_ = self.episodes[task, batch_idx]
+                take = min(self.episode_length[task, batch_idx], remaining_length)
+                till = pos + take
+                for target, source in zip([obs, next_obs], [obs_, next_obs_]):
+                    for k, v in target.items():
+                        v[batch_idx, pos:till] = source[k][:take]
+                actions[batch_idx, pos:till] = actions_[:take]
+                rewards[batch_idx, pos:till] = rewards_[:take]
+                dones[batch_idx, pos:till] = dones_[:take]
 
-            env_indices = self.episodes_env[episodes]
-            episodes = self.episodes[episodes]
-        else:
-            episodes = episodes[:, None]
-            env_indices = self.episodes_env[:, None]
+        obs: Dict = self._normalize_obs(obs, env)  # type: ignore
+        next_obs: Dict = self._normalize_obs(next_obs, env)  # type: ignore
 
-        shortest_episode = (
-            np.where(episodes[..., 0] <= episodes[..., 1], episodes[..., 1], episodes[..., 1] + self.buffer_size)
-            - episodes[..., 0]
-        ).min()
-        dec_indices = (episodes[:, :, 0, None] + np.arange(0, shortest_episode)[None, None]) % self.buffer_size
-        env_indices = np.broadcast_to(env_indices[:, :, None], dec_indices.shape)
-        batch_inds = dec_indices.reshape(-1)
-        env_indices = env_indices.reshape(-1)
-
-        samples = self._get_samples(batch_inds, env_indices, env=env)
         return DictReplayBufferSamples(
-            apply_function_to_type(samples.observations, th.Tensor, lambda x: x.view(batch_size, shortest_episode * 4, -1)),  # type: ignore
-            samples.actions.view(batch_size, shortest_episode * 4, -1),
-            apply_function_to_type(samples.next_observations, th.Tensor, lambda x: x.view(batch_size, shortest_episode * 4, -1)),  # type: ignore
-            samples.dones.view(batch_size, shortest_episode * 4, -1),
-            samples.rewards.view(batch_size, shortest_episode * 4, -1),
+            {k: self.to_torch(v) for k, v in obs.items()},
+            self.to_torch(actions),
+            {k: self.to_torch(v) for k, v in next_obs.items()},
+            self.to_torch(dones).reshape(batch_size, -1, 1),
+            self.to_torch(rewards).reshape(batch_size, -1, 1),
         )
-
-    def _get_samples(
-        self, batch_inds: np.ndarray, env_indices: np.ndarray, env: Optional[VecNormalize] = None
-    ) -> DictReplayBufferSamples:
-        batch_size = len(batch_inds)
-
-        # Normalize if needed and remove extra dimension (we are using only one env for now)
-        obs_ = self._normalize_obs({key: obs[batch_inds, env_indices, :] for key, obs in self.observations.items()}, env)
-        next_obs_ = self._normalize_obs(
-            {key: obs[batch_inds, env_indices, :] for key, obs in self.next_observations.items()}, env
-        )
-
-        # Convert to torch tensor
-        observations = {key: self.to_torch(obs) for key, obs in obs_.items()}  # type: ignore
-        next_observations = {key: self.to_torch(obs) for key, obs in next_obs_.items()}  # type: ignore
-        actions = self.to_torch(self.actions[batch_inds, env_indices])
-        dones = self.to_torch(self.dones[batch_inds, env_indices] * (1 - self.timeouts[batch_inds, env_indices])).reshape(
-            -1, 1
-        )
-        rewards = self.to_torch(self._normalize_reward(self.rewards[batch_inds, env_indices].reshape(-1, 1), env))
-
-        return DictReplayBufferSamples(observations, actions, next_observations, dones, rewards)
 
 
 class CEMRLPolicyBuffer(DictReplayBuffer):
@@ -256,7 +260,7 @@ class CEMRLPolicyBuffer(DictReplayBuffer):
 
 
 class CombinedBuffer(DictReplayBuffer):
-    def __init__(self, buffers: List[CEMRLBuffer], **kwargs):
+    def __init__(self, buffers: List[DictReplayBuffer], **kwargs):
         self.buffers = buffers
         dummy_space = spaces.Dict({"obs": spaces.Box(0, 1, (1,))})
         super().__init__(0, dummy_space, spaces.Box(0, 1, (1,)))
@@ -274,14 +278,12 @@ class CombinedBuffer(DictReplayBuffer):
         return samples
 
     def sample(self, batch_size: int, env: Optional[VecNormalize] = None) -> DictReplayBufferSamples:
-        has_no_episodes = [buffer.num_episodes == 0 and not buffer.all_episodes_valid for buffer in self.buffers]
-        items_per_buffer = np.array([buffer.size() * buffer.n_envs for buffer in self.buffers])
-        items_per_buffer[has_no_episodes] = 0
+        items_per_buffer = np.array([buffer.size() for buffer in self.buffers])
         sum_items = np.sum(items_per_buffer)
         num_samples = batch_size * (items_per_buffer / sum_items)
         num_samples = num_samples.astype(int)
 
         buffer_return = [
-            buffer.sample(num_samples, env) for num_samples, buffer in zip(num_samples, self.buffers) if num_samples != 0
+            buffer.sample(num_sample, env) for num_sample, buffer in zip(num_samples, self.buffers) if num_sample != 0
         ]
         return DictReplayBufferSamples(*self._concat_tensor_recusively(buffer_return))  # type: ignore

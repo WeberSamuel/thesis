@@ -14,7 +14,7 @@ from stable_baselines3.common.vec_env import VecExtractDictObs
 import torch
 from src.cli import Callbacks
 from src.cemrl.exploration_cemrl import CEMRL
-from src.cemrl.buffers import CEMRLBuffer
+from src.cemrl.buffers import EpisodicBuffer
 from src.env.wrappers.include_goal import IncludeGoalWrapper
 from src.cemrl.wrappers.reward_and_action_to_obs_wrapper import RewardAndActionToObsWrapper
 from src.env.wrappers.heatmap import HeatmapWrapper
@@ -144,7 +144,7 @@ def exploration_cemrl_meta():
         buffer_size=10_000_000,
         tensorboard_log="logs/cemrl",
         policy_kwargs={"num_classes": 1, "latent_dim": 2},
-        replay_buffer_class=CEMRLBuffer,
+        replay_buffer_class=EpisodicBuffer,
         replay_buffer_kwargs={"original_obs_space": env.original_obs_space},
         device="cuda",
         encoder_gradient_steps=1,
@@ -165,7 +165,7 @@ def exploration_cemrl_meta():
             "ensemble": algorithm.policy.decoder,
             "encoder": algorithm.policy.encoder,
         },
-        replay_buffer_class=CEMRLBuffer,
+        replay_buffer_class=EpisodicBuffer,
         replay_buffer_kwargs={"original_obs_space": env.original_obs_space},
         device="cuda",
         gradient_steps=0,
