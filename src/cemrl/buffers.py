@@ -134,6 +134,9 @@ class CEMRLBuffer(DictReplayBuffer):
 
             env_indices = self.episodes_env[episodes]
             episodes = self.episodes[episodes]
+        else:
+            episodes = episodes[:, None]
+            env_indices = self.episodes_env[:, None]
 
         shortest_episode = (
             np.where(episodes[..., 0] <= episodes[..., 1], episodes[..., 1], episodes[..., 1] + self.buffer_size)

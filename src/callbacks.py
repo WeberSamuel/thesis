@@ -412,8 +412,12 @@ class SaveConfigCallback(BaseCallback):
         path = os.path.join(self.logger.get_dir(), "config.yaml")
         self.parser.save(self.cfg, path, format="yaml", skip_none=False, overwrite=True, multifile=False)
 
+        tag_name = self.logger.get_dir().replace("\\", "/")
         repo = Repo(".")
-        repo.create_tag(self.logger.get_dir().replace("\\", "/"))
+        tag_with_same_name = [t for t in repo.tags if t.name == tag_name]
+        if len(tag_with_same_name) != 0:
+            repo.delete_tag(tag_with_same_name[0])    
+        repo.create_tag(tag_name)
 
         path = os.path.join(self.logger.get_dir(), "git_info")
         branch = repo.active_branch

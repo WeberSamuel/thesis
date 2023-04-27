@@ -258,11 +258,11 @@ if __name__ == "__main__":
     )
 
     parser.link_arguments("callback.eval_callback.init_args.eval_env", "callback.eval_exploration_callback.init_args.eval_env")
-    # parser.link_arguments(
-    #     "callback.exploration_callback.exploration_algorithm",
-    #     "callback.eval_exploration_callback.init_args.eval_model",
-    #     apply_on="instantiate",
-    # )
+    parser.link_arguments(
+        "callback.exploration_callback.exploration_algorithm",
+        "callback.eval_exploration_callback.init_args.eval_model",
+        apply_on="instantiate",
+    )
     # parser.link_arguments(
     #     (
     #         "env",
