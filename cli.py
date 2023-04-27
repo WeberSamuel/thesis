@@ -258,11 +258,11 @@ if __name__ == "__main__":
     )
 
     parser.link_arguments("callback.eval_callback.init_args.eval_env", "callback.eval_exploration_callback.init_args.eval_env")
-    parser.link_arguments(
-        "callback.exploration_callback.exploration_algorithm",
-        "callback.eval_exploration_callback.init_args.eval_model",
-        apply_on="instantiate",
-    )
+    # parser.link_arguments(
+    #     "callback.exploration_callback.exploration_algorithm",
+    #     "callback.eval_exploration_callback.init_args.eval_model",
+    #     apply_on="instantiate",
+    # )
     # parser.link_arguments(
     #     (
     #         "env",
@@ -284,14 +284,14 @@ if __name__ == "__main__":
         callbacks = init_cfg[cfg.subcommand].callback or []
         callbacks = (
             [SaveConfigCallback(parser, cfg)] +
-            [callback.exploration_callback]
+            ([callback.exploration_callback] if callback.exploration_callback is not None else [])
             + callbacks
-            + [callback.callbacks, callback.eval_callback, callback.eval_exploration_callback, SaveHeatmapCallback([
-                ("env", init_cfg.env),
-                ("ex_env", callback.exploration_callback.exploration_algorithm.env),
-                ("eval", callback.eval_callback.eval_env),
-                ("ex_eval", callback.eval_exploration_callback.eval_env)
-            ], save_freq=100)]
+            + [callback.callbacks, callback.eval_callback, callback.eval_exploration_callback, SaveHeatmapCallback(
+                [("env", init_cfg.env)]
+                + ([("ex_env", callback.exploration_callback.exploration_algorithm.env)] if callback.exploration_callback is not None else [])
+                + ([("eval", callback.eval_callback.eval_env)] if callback.eval_callback is not None else [])
+                + ([("ex_eval", callback.eval_exploration_callback.eval_env)] if callback.eval_exploration_callback is not None else [])
+            , save_freq=100)]
         )
         callbacks = list(filter(lambda x: x is not None, callbacks))
         init_cfg[cfg.subcommand].callback = callbacks or None
