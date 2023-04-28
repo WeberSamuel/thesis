@@ -144,8 +144,8 @@ class EpisodicBuffer(DictReplayBuffer):
         available_episodes = np.where(self.episode_full, self.max_num_episodes_per_task, self.episode_pos)
         available_tasks = np.where(available_episodes != 0)[0]
         tasks = np.random.choice(available_tasks, batch_size)
-        episode_idx = np.random.randint(0, available_episodes[tasks], (self.link_episodes + 1, len(tasks)))
-        episode_length = self.episode_length[tasks, episode_idx]
+        episode_link_idxs = np.random.randint(0, available_episodes[tasks], (self.link_episodes + 1, len(tasks))).T
+        episode_length = self.episode_length[tasks, episode_link_idxs.T]
         shortest_length = np.sum(episode_length, axis=0).min()
 
         obs_shape: Dict = self.obs_shape  # type: ignore
@@ -157,19 +157,21 @@ class EpisodicBuffer(DictReplayBuffer):
         rewards = np.zeros((batch_size, shortest_length), dtype=np.float32)
         dones = np.zeros((batch_size, shortest_length), dtype=np.float32)
 
-        for linked_episode in episode_idx:
+        for task, batch_idx, link_idxs in zip(tasks, range(batch_size), episode_link_idxs):
             pos = 0
             remaining_length = shortest_length
-            for task, batch_idx in zip(tasks, linked_episode):
-                obs_, next_obs_, actions_, rewards_, dones_ = self.episodes[task, batch_idx]
-                take = min(self.episode_length[task, batch_idx], remaining_length)
+            for link_idx in link_idxs:
+                obs_, next_obs_, actions_, rewards_, dones_ = self.episodes[task, link_idx]
+                take = min(self.episode_length[task, link_idx], remaining_length)
                 till = pos + take
                 for target, source in zip([obs, next_obs], [obs_, next_obs_]):
-                    for k, v in target.items():
-                        v[batch_idx, pos:till] = source[k][:take]
+                    for k in target.keys():
+                        target[k][batch_idx, pos:till] = source[k][:take]
                 actions[batch_idx, pos:till] = actions_[:take]
                 rewards[batch_idx, pos:till] = rewards_[:take]
                 dones[batch_idx, pos:till] = dones_[:take]
+
+                pos += take
 
         obs: Dict = self._normalize_obs(obs, env)  # type: ignore
         next_obs: Dict = self._normalize_obs(next_obs, env)  # type: ignore
