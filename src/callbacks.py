@@ -15,7 +15,7 @@ import torch as th
 from src.cemrl.buffers import CombinedBuffer
 from src.cemrl.policies import CEMRLPolicy
 from src.cemrl.types import CEMRLObsTensorDict
-from src.env.wrappers.heatmap import HeatmapWrapper
+from src.envs.wrappers.heatmap import HeatmapWrapper
 from src.plan2explore.policies import Plan2ExplorePolicy
 from stable_baselines3.common.off_policy_algorithm import OffPolicyAlgorithm
 from git.repo import Repo

@@ -7,7 +7,7 @@ from stable_baselines3.common.vec_env.base_vec_env import (
     VecEnvObs,
     VecEnvStepReturn,
 )
-from src.env.meta_env import MetaVecEnv
+from src.envs.meta_env import MetaVecEnv
 
 
 class RewardAndActionToObsWrapper(VecEnvWrapper):

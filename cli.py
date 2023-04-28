@@ -1,43 +1,31 @@
 """Main entry point for running trainings and evaluations."""
-import json
-from typing import Any, Dict, Optional, Type
-from gym import Env
 import jsonargparse
 import stable_baselines3 as sb3
-from stable_baselines3.common.callbacks import (
-    ProgressBarCallback,
-    CallbackList,
-    EvalCallback,
-)
-from dataclasses import fields
-from stable_baselines3.common.vec_env import VecExtractDictObs
 import torch
-from src.cli import Callbacks
-from src.cemrl.exploration_cemrl import CEMRL
-from src.cemrl.buffers import EpisodicBuffer
-from src.env.wrappers.include_goal import IncludeGoalWrapper
-from src.cemrl.wrappers.reward_and_action_to_obs_wrapper import RewardAndActionToObsWrapper
-from src.env.wrappers.heatmap import HeatmapWrapper
-from src.cemrl.cemrl import CEMRL
-from src.cemrl.policies import CEMRLPolicy
+from stable_baselines3.common.callbacks import CallbackList, EvalCallback, ProgressBarCallback
+from stable_baselines3.common.vec_env import VecExtractDictObs
+
 from src.callbacks import (
     CheckpointInLogFolderCallback,
-    Plan2ExploreEvalCallback,
     ExplorationCallback,
+    Plan2ExploreEvalCallback,
     SaveConfigCallback,
     SaveHeatmapCallback,
 )
-from stable_baselines3.common.buffers import ReplayBuffer
-from stable_baselines3.common.off_policy_algorithm import OffPolicyAlgorithm
-from src.env.toy_goal_env import ToyGoal1DEnv, ToyGoalEnv
-from src.env.samplers.uniform_circle_sampler import UniformCircleSampler
-from src.env.samplers.random_box_sampler import RandomBoxSampler
-from src.plan2explore.plan2explore import Plan2Explore
-from src.plan2explore.networks import Ensemble, WorldModel
-from src.plan2explore.policies import CEMRLExplorationPolicy, Plan2ExplorePolicy
+from src.cemrl.buffers import EpisodicBuffer
+from src.cemrl.cemrl import CEMRL
+from src.cemrl.exploration_cemrl import CEMRL
+from src.cemrl.policies import CEMRLPolicy
 from src.cemrl.wrappers import CEMRLHistoryWrapper
-from src.cemrl.callbacks import LatentToGoalCallback
-from stable_baselines3.common.vec_env import VecEnvWrapper
+from src.cemrl.wrappers.reward_and_action_to_obs_wrapper import RewardAndActionToObsWrapper
+from src.cli import Callbacks
+from src.envs.samplers.random_box_sampler import RandomBoxSampler
+from src.envs.samplers.uniform_circle_sampler import UniformCircleSampler
+from src.envs.toy_goal_env import ToyGoalEnv
+from src.envs.wrappers.heatmap import HeatmapWrapper
+from src.envs.wrappers.include_goal import IncludeGoalWrapper
+from src.plan2explore.plan2explore import Plan2Explore
+from src.plan2explore.policies import CEMRLExplorationPolicy
 
 
 def plan2explore_meta():
@@ -224,7 +212,6 @@ def sac():
     sac = sb3.SAC("MultiInputPolicy", env, 1e-3, gradient_steps=2)
     sac.learn(1_000_000, EvalCallback(eval_env, render=True, eval_freq=100), progress_bar=True)
 
-
 from jsonargparse import CLI, capture_parser
 
 if __name__ == "__main__":
@@ -277,21 +264,35 @@ if __name__ == "__main__":
 
     cfg = parser.parse_args()
     init_cfg = parser.instantiate_classes(cfg)
+
     if hasattr(init_cfg[cfg.subcommand], "callback"):
         callback: Callbacks = init_cfg.callback
-        
 
         callbacks = init_cfg[cfg.subcommand].callback or []
         callbacks = (
-            [SaveConfigCallback(parser, cfg)] +
-            ([callback.exploration_callback] if callback.exploration_callback is not None else [])
+            [SaveConfigCallback(parser, cfg)]
+            + ([callback.exploration_callback] if callback.exploration_callback is not None else [])
             + callbacks
-            + [callback.callbacks, callback.eval_callback, callback.eval_exploration_callback, SaveHeatmapCallback(
-                [("env", init_cfg.env)]
-                + ([("ex_env", callback.exploration_callback.exploration_algorithm.env)] if callback.exploration_callback is not None else [])
-                + ([("eval", callback.eval_callback.eval_env)] if callback.eval_callback is not None else [])
-                + ([("ex_eval", callback.eval_exploration_callback.eval_env)] if callback.eval_exploration_callback is not None else [])
-            , save_freq=100)]
+            + [
+                callback.callbacks,
+                callback.eval_callback,
+                callback.eval_exploration_callback,
+                SaveHeatmapCallback(
+                    [("env", init_cfg.env)]
+                    + (
+                        [("ex_env", callback.exploration_callback.exploration_algorithm.env)]
+                        if callback.exploration_callback is not None
+                        else []
+                    )
+                    + ([("eval", callback.eval_callback.eval_env)] if callback.eval_callback is not None else [])
+                    + (
+                        [("ex_eval", callback.eval_exploration_callback.eval_env)]
+                        if callback.eval_exploration_callback is not None
+                        else []
+                    ),
+                    save_freq=100,
+                ),
+            ]
         )
         callbacks = list(filter(lambda x: x is not None, callbacks))
         init_cfg[cfg.subcommand].callback = callbacks or None

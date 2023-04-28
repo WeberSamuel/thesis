@@ -3,7 +3,7 @@ import gym.spaces as spaces
 from stable_baselines3.common.vec_env.base_vec_env import VecEnv
 from stable_baselines3.common.vec_env.vec_frame_stack import VecFrameStack
 
-from src.env.wrappers.include_goal import IncludeGoalWrapper
+from src.envs.wrappers.include_goal import IncludeGoalWrapper
 from .stackable_wrapper import StackableWrapper
 from .reward_and_action_to_obs_wrapper import RewardAndActionToObsWrapper
 

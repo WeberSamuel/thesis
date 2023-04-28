@@ -5,7 +5,7 @@ from stable_baselines3.common.type_aliases import RolloutReturn
 import torch as th
 from gym import Env
 from src.cli import DummyPolicy
-from src.env.wrappers.include_goal import IncludeGoalWrapper
+from src.envs.wrappers.include_goal import IncludeGoalWrapper
 from src.cemrl.wrappers.cemrl_history_wrapper import CEMRLHistoryWrapper
 from src.plan2explore.policies import Plan2ExplorePolicy
 from stable_baselines3.common.vec_env import is_vecenv_wrapped, VecEnv

@@ -1,0 +1,41 @@
+policy:
+  init_args:
+    latent_dim: 1
+env:
+  class_path: src.cemrl.wrappers.CEMRLHistoryWrapper
+  init_args:
+    venv:
+      class_path: src.envs.wrappers.heatmap.HeatmapWrapper
+      init_args:
+        venv:
+          class_path: src.envs.toy_goal_env.ToyGoal1DEnv
+          init_args:
+            venv:
+              class_path: src.envs.toy_goal_env.ToyGoalEnv
+              init_args:
+                num_envs: 256
+                goal_sampler: src.envs.samplers.random_box_sampler.RandomBoxSampler
+encoder_window: 30
+tensorboard_log: "logs/toy-goal-1d/p2e-cemrl"
+learn:
+  total_timesteps: 1_000_000
+  log_interval: 1
+  tb_log_name: default
+callback:
+  eval_callback:
+    init_args:
+      eval_env:
+        class_path: src.cemrl.wrappers.CEMRLHistoryWrapper
+        init_args:
+          venv:
+            class_path: src.envs.wrappers.heatmap.HeatmapWrapper
+            init_args:
+              venv:
+                class_path: src.envs.toy_goal_env.ToyGoal1DEnv
+                init_args:
+                  venv:
+                    class_path: src.envs.toy_goal_env.ToyGoalEnv
+                    init_args:
+                      num_envs: 16
+                      goal_sampler: src.envs.samplers.UniformCircleSampler
+          n_stack: ${encoder_window}

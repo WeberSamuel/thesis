@@ -1,0 +1,6 @@
+replay_buffer: 
+  class_path: src.cemrl.buffers.EpisodicBuffer
+  init_args:
+    link_episodes: 0
+learn:
+  tb_log_name: "no_linking"
