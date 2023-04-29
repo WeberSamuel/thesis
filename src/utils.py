@@ -41,12 +41,21 @@ def remove_dim_from_space(space: spaces.Dict | spaces.Box, dim: int):
 
 def get_random_encoder_window_samples(samples: DictReplayBufferSamples, encoder_window:int):
     device = samples.actions.device
-    batch_size = len(samples.actions)
     episode_length = samples.actions.shape[1]
 
-    encoder_timestep_idx = th.randint(encoder_window, episode_length, (batch_size,))
-    encoder_timestep_idx = encoder_timestep_idx[:, None] - th.arange(0, encoder_window)[None]
-    encoder_timestep_idx = encoder_timestep_idx.flip(1).to(device)
+    # filter out encoder windows that contain other epochs
+    dones = samples.dones.squeeze(-1)
+    dones = dones.roll(1)
+    invalid = th.where(dones)
+    invalid_idx = invalid[1][None] + th.arange(0, encoder_window, device=device)[:, None]
+    invalid_idx = invalid_idx.clamp_max(episode_length - 1).view(-1)
+    invalid = (invalid[0].repeat(encoder_window),  invalid_idx)
+    idx_probs = th.ones_like(dones)
+    idx_probs[invalid] = 0
+    
+    encoder_timestep_idx = th.multinomial(idx_probs, 1, replacement=True).squeeze(-1)
+    encoder_timestep_idx = encoder_timestep_idx[:, None] - th.arange(0, encoder_window, device=device)[None]
+    encoder_timestep_idx = encoder_timestep_idx.flip(1)
 
     obs_gather = encoder_timestep_idx[..., None].expand(-1, -1, *samples.observations["observation"].shape[2:])
     action_gather = encoder_timestep_idx[..., None].expand(-1, -1, *samples.actions.shape[2:])

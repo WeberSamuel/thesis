@@ -130,7 +130,7 @@ class EpisodicBuffer(DictReplayBuffer):
                     next_obs,
                     self.actions[obs_indicies, finished_idx].copy(),
                     self.rewards[obs_indicies, finished_idx].copy(),
-                    self.dones[obs_indicies, finished_idx] * (1 - self.timeouts[obs_indicies, finished_idx]),
+                    self.dones[obs_indicies, finished_idx] # * (1 - self.timeouts[obs_indicies, finished_idx]),
                 )
                 self.episode_length[task, self.episode_pos[task]] = self.pos[finished_idx]
                 self.pos[finished_idx] = 0
