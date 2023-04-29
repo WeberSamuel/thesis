@@ -19,8 +19,6 @@ encoder_window: 30
 tensorboard_log: "logs/toy-goal-1d/p2e-cemrl"
 learn:
   total_timesteps: 1_000_000
-  log_interval: 1
-  tb_log_name: default
 callback:
   eval_callback:
     init_args:

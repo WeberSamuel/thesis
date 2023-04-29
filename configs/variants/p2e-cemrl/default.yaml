@@ -1,3 +1,5 @@
+policy_algorithm: src.cemrl.cemrl.CEMRLSACPolicy
+replay_buffer: src.cemrl.buffers.EpisodicBuffer
 policy:
   class_path: src.cemrl.policies.CEMRLPolicy
 callback:
@@ -15,7 +17,7 @@ callback:
     init_args:
       log_path: eval
       eval_freq: 100
-      n_eval_episodes: ${callback.eval_callback.init_args.eval_env.init_args.venv.init_args.venv.init_args.num_envs}
+      n_eval_episodes: 32
       callback_on_new_best:
         class_path: src.callbacks.RecordVideo
         init_args:
@@ -25,7 +27,7 @@ callback:
     init_args:
       log_path: p2e-eval
       eval_freq: 100
-      n_eval_episodes: ${callback.eval_callback.init_args.eval_env.init_args.venv.init_args.venv.init_args.num_envs}
+      n_eval_episodes: 32
       callback_on_new_best:
         class_path: src.callbacks.RecordVideo
         init_args:
@@ -37,3 +39,6 @@ callback:
         class_path: src.plan2explore.plan2explore.Plan2Explore
         init_args:
           policy: src.plan2explore.policies.CEMRLExplorationPolicy
+learn:
+  tb_log_name: default
+  log_interval: 1
