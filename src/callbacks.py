@@ -236,15 +236,18 @@ class ExplorationCallback(BaseCallback):
 
         if isinstance(self.exploration_algorithm, OffPolicyAlgorithm):
             assert self.exploration_algorithm.replay_buffer is not None
-            steps = self.pre_train_steps
-            self.exploration_algorithm._setup_learn(steps, None)
+            # steps = self.pre_train_steps
+            # self.exploration_algorithm._setup_learn(steps, None)
             self._setup_rollout_collection(self.pre_train_steps)
-            self.exploration_algorithm.collect_rollouts(
-                self.exploration_algorithm.env,
-                self._dummy_callback,
-                TrainFreq(steps, TrainFrequencyUnit.STEP),
-                self.exploration_algorithm.replay_buffer,
+            self.exploration_algorithm.learn(
+                self.pre_train_steps * self.exploration_algorithm.n_envs, tb_log_name="exploration", progress_bar=True
             )
+            # self.exploration_algorithm.collect_rollouts(
+            #     self.exploration_algorithm.env,
+            #     self._dummy_callback,
+            #     TrainFreq(steps, TrainFrequencyUnit.STEP),
+            #     self.exploration_algorithm.replay_buffer,
+            # )
             self._cleanup_rollout_collection()
 
     def _on_rollout_start(self) -> None:
@@ -413,7 +416,7 @@ class SaveConfigCallback(BaseCallback):
         path = os.path.join(self.logger.get_dir(), "config.yaml")
         self.parser.save(self.cfg, path, format="yaml", skip_none=False, overwrite=True, multifile=False)
 
-        cfg = {k: v for k,v in vars(self.cfg.as_flat()).items() if isinstance(v, (int, float, str, bool, th.Tensor))}
+        cfg = {k: v for k, v in vars(self.cfg.as_flat()).items() if isinstance(v, (int, float, str, bool, th.Tensor))}
         metric_dict = {
             "eval/success_rate": 0.0,
             "eval/mean_reward": 0.0,
@@ -427,7 +430,7 @@ class SaveConfigCallback(BaseCallback):
         repo = Repo(".")
         tag_with_same_name = [t for t in repo.tags if t.name == tag_name]
         if len(tag_with_same_name) != 0:
-            repo.delete_tag(tag_with_same_name[0])    
+            repo.delete_tag(tag_with_same_name[0])
         repo.create_tag(tag_name)
 
         path = os.path.join(self.logger.get_dir(), "git_info")

@@ -197,6 +197,7 @@ class Plan2ExploreMPCPolicy(Plan2ExplorePolicy):
             )
             if (
                 self.times_threshold_reached <= -self.reduce_num_timesteps_after_num_threshold
+                and self.num_timesteps < self.max_timesteps
             ):
                 self.times_threshold_reached = 0
                 self.num_timesteps += 1
