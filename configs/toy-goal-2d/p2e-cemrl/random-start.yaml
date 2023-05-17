@@ -5,5 +5,4 @@ env:
         venv:
           init_args:
             random_position: True
-learn:
-  tb_log_name: "random_start"
+tensorboard_log: "logs/toy-goal-2d/p2e-cemrl/random_start"

@@ -19,6 +19,7 @@ from src.envs.wrappers.heatmap import HeatmapWrapper
 from src.plan2explore.policies import Plan2ExplorePolicy
 from stable_baselines3.common.off_policy_algorithm import OffPolicyAlgorithm
 from git.repo import Repo
+from stable_baselines3.common.logger import HParam
 from stable_baselines3.common.vec_env import (
     VecEnvWrapper,
     unwrap_vec_wrapper,
@@ -411,6 +412,16 @@ class SaveConfigCallback(BaseCallback):
     def _on_training_start(self) -> None:
         path = os.path.join(self.logger.get_dir(), "config.yaml")
         self.parser.save(self.cfg, path, format="yaml", skip_none=False, overwrite=True, multifile=False)
+
+        cfg = {k: v for k,v in vars(self.cfg.as_flat()).items() if isinstance(v, (int, float, str, bool, th.Tensor))}
+        metric_dict = {
+            "eval/success_rate": 0.0,
+            "eval/mean_reward": 0.0,
+            "p2e-eval/success_rate": 0.0,
+            "p2e-eval/mean_reward": 0.0,
+        }
+        self.logger.record("hparams", HParam(cfg, metric_dict), exclude=("stdout", "log", "json", "csv"))
+        self.logger.dump()
 
         tag_name = self.logger.get_dir().replace("\\", "/")
         repo = Repo(".")

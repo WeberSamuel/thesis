@@ -1,5 +1,8 @@
 policy_algorithm: src.cemrl.cemrl.CEMRLSACPolicy
 replay_buffer: src.cemrl.buffers.EpisodicBuffer
+learning_rate: 1e-4
+encoder_gradient_steps: 1
+policy_gradient_steps: 2
 policy:
   class_path: src.cemrl.policies.CEMRLPolicy
 callback:
@@ -35,6 +38,8 @@ callback:
   exploration_callback:
     class_path: src.callbacks.ExplorationCallback
     init_args:
+      steps_per_rollout: 10
+      pre_train_steps: 500
       exploration_algorithm:
         class_path: src.plan2explore.plan2explore.Plan2Explore
         init_args:

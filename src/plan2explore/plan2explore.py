@@ -4,6 +4,8 @@ from stable_baselines3.common.off_policy_algorithm import OffPolicyAlgorithm
 from stable_baselines3.common.type_aliases import RolloutReturn
 import torch as th
 from gym import Env
+from src.cemrl.buffers import EpisodicBuffer
+from src.cemrl.types import CEMRLObsTensorDict
 from src.cli import DummyPolicy
 from src.envs.wrappers.include_goal import IncludeGoalWrapper
 from src.cemrl.wrappers.cemrl_history_wrapper import CEMRLHistoryWrapper
@@ -15,15 +17,33 @@ from stable_baselines3.common.buffers import ReplayBuffer
 class Plan2Explore(OffPolicyAlgorithm):
     """Uses a world model for exploration via uncertainty and reward prediction during evaluation."""
 
-    def __init__(self, policy: Plan2ExplorePolicy, env: VecEnv|Env, replay_buffer: ReplayBuffer, learning_rate=1e-3, _init_setup_model=True, **kwargs):
+    def __init__(
+        self,
+        policy: Plan2ExplorePolicy,
+        env: VecEnv | Env,
+        replay_buffer: ReplayBuffer,
+        learning_rate=1e-3,
+        _init_setup_model=True,
+        **kwargs
+    ):
         """Initialize the Algorithm."""
-        super().__init__(DummyPolicy, env, learning_rate, policy_kwargs={}, buffer_size=0, support_multi_env=True, **kwargs)
+        super().__init__(
+            DummyPolicy,
+            env,
+            learning_rate,
+            policy_kwargs={},
+            buffer_size=0,
+            support_multi_env=True,
+            **kwargs
+        )
         self.replay_buffer = replay_buffer
-        
+        self.learning_starts = max(self.learning_starts, self.n_envs * 200)
+
         if _init_setup_model:
             self._setup_model()
-        
+
         self.policy = policy
+        self.scaler = th.cuda.amp.GradScaler()
 
     def train(self, gradient_steps: int, batch_size: int) -> None:
         """Train the policy .
@@ -42,29 +62,37 @@ class Plan2Explore(OffPolicyAlgorithm):
         contains_goals = is_vecenv_wrapped(self.env, IncludeGoalWrapper)
 
         for _ in range(gradient_steps):
-            (observations, actions, next_observations, dones, rewards) = self.replay_buffer.sample(batch_size)
-            z = None
-            if contains_goals:
-                z = next_observations["goal"]
-            if contains_history:
+            with th.autocast("cuda"):
+                (observations, actions, next_observations, dones, rewards) = self.replay_buffer.sample(batch_size)
+                z = None
                 if contains_goals:
-                    z = next_observations["goal"][:, -1]
-                observations = observations["observation"][:, -1]
-                next_observations = next_observations["observation"][:, -1]
-            assert th.allclose(next_observations - observations, actions, atol=1e-5)
-            assert th.allclose(-th.norm(z - next_observations, dim=-1), rewards[:, 0])
-            pred_next_obs, pred_reward = self.policy.ensemble(observations, actions, z=z, return_raw=True)
-            obs_loss = th.nn.functional.mse_loss(pred_next_obs, next_observations[None].expand_as(pred_next_obs))
-            reward_loss = th.nn.functional.mse_loss(pred_reward, rewards[None].expand_as(pred_reward))
-            loss = obs_loss + reward_loss
+                    z = next_observations["goal"]
+                if self.policy.latent_generator is not None:
+                    z = self.policy.latent_generator(
+                        CEMRLObsTensorDict(observation=observations, reward=rewards, action=actions)
+                    )
+                if contains_history:
+                    if contains_goals:
+                        z = next_observations["goal"][:, -1]
+                    observations = observations["observation"][:, -1]
+                    next_observations = next_observations["observation"][:, -1]
+                    actions = actions[:, -1]
+                    rewards = rewards[:, -1]
+                # assert th.allclose(next_observations - observations, actions, atol=1e-5)
+                # assert th.allclose(-th.norm(z - next_observations, dim=-1), rewards[:, 0])
+                pred_next_obs, pred_reward = self.policy.ensemble(observations, actions, z=z, return_raw=True)
+                obs_loss = th.nn.functional.mse_loss(pred_next_obs, next_observations[None].expand_as(pred_next_obs))
+                reward_loss = th.nn.functional.mse_loss(pred_reward, rewards[None].expand_as(pred_reward))
+                loss = obs_loss + reward_loss
 
-            self.logger.record_mean("obs_loss", obs_loss.detach().item())
-            self.logger.record_mean("reward_loss", reward_loss.detach().item())
-            self.logger.record_mean("loss", loss.detach().item())
+                self.logger.record_mean("obs_loss", obs_loss.detach().item())
+                self.logger.record_mean("reward_loss", reward_loss.detach().item())
+                self.logger.record_mean("loss", loss.detach().item())
 
             self.policy.optimizer.zero_grad()
-            loss.backward()
-            self.policy.optimizer.step()
+            self.scaler.scale(loss).backward()
+            self.scaler.step(self.policy.optimizer)
+            self.scaler.update()
 
         self._n_updates += gradient_steps
         self.logger.record("train/n_updates", self._n_updates, exclude="tensorboard")
