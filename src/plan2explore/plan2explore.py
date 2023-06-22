@@ -27,6 +27,7 @@ class Plan2Explore(OffPolicyAlgorithm):
 
         self.policy: Plan2ExplorePolicy
         self.scaler = th.cuda.amp.GradScaler()
+        self.log_prefix = "p2e/"
 
     def train(self, gradient_steps: int, batch_size: int) -> None:
         """Train the policy .
@@ -80,9 +81,9 @@ class Plan2Explore(OffPolicyAlgorithm):
                 reward_loss = th.nn.functional.mse_loss(pred_reward, rewards[None].expand_as(pred_reward))
                 loss = obs_loss + reward_loss
 
-                self.logger.record_mean("p2e/obs_loss", obs_loss.detach().item())
-                self.logger.record_mean("p2e/reward_loss", reward_loss.detach().item())
-                self.logger.record_mean("p2e/loss", loss.detach().item())
+                self.logger.record_mean(f"{self.log_prefix}obs_loss", obs_loss.detach().item())
+                self.logger.record_mean(f"{self.log_prefix}reward_loss", reward_loss.detach().item())
+                self.logger.record_mean(f"{self.log_prefix}loss", loss.detach().item())
 
             self.policy.optimizer.zero_grad()
             self.scaler.scale(loss).backward()
@@ -90,4 +91,4 @@ class Plan2Explore(OffPolicyAlgorithm):
             self.scaler.update()
 
         self._n_updates += gradient_steps
-        self.logger.record("p2e/n_updates", self._n_updates, exclude="tensorboard")
+        self.logger.record(f"{self.log_prefix}n_updates", self._n_updates, exclude="tensorboard")

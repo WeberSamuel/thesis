@@ -70,10 +70,14 @@ class ExplorationCallback(BaseCallback):
             assert self.exploration_algorithm.replay_buffer is not None
 
             self._setup_rollout_collection(self.pre_train_steps)
+            log_prefix = getattr(self.exploration_algorithm, "log_prefix", None)
+            if log_prefix is not None:
+                setattr(self.exploration_algorithm, "log_prefix", f"pretrain_{log_prefix}")
             self.exploration_algorithm.learn(
                 self.pre_train_steps * self.exploration_algorithm.n_envs, tb_log_name="exploration", progress_bar=True
             )
-            self.exploration_algorithm.replay_buffer.is_exploring = False
+            if log_prefix is not None:
+                setattr(self.exploration_algorithm, "log_prefix", log_prefix)
             self._cleanup_rollout_collection()
 
     def _on_rollout_start(self) -> None:

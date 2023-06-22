@@ -55,7 +55,7 @@ class NonStationaryWrapper(Wrapper):
         obs, reward, terminated, truncated, info = super().step(action)
 
         if self.mode in [ChangeModes.AFTER_TIMESTEP, ChangeModes.AFTER_TIMESTEP_WITH_PROBABILITY]:
-            if np.random.random() < self.change_probability:
+            if np.random.random() < self.change_probability and self.change_after_timestep <= self.timestep:
                 self.unwrapped.change_goal()
                 self.timestep = 0
 

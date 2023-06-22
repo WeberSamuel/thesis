@@ -37,7 +37,7 @@ envs:
       env:
         class_path: src.cemrl.wrappers.CEMRLWrapper
         init_args:
-          time_limit: 200
+          time_limit: 300
           env:
             class_path: src.envs.wrappers.heatmap.HeatmapWrapper
             init_args:

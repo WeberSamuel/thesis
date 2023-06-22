@@ -21,11 +21,15 @@ class SuccessWrapper(Wrapper):
 
 
 class PercentageSuccessWrapper(SuccessWrapper):
-    def __init__(self, env: Env, success_threshold: float = 0.5, episode_window: float = 0.2):
+    def __init__(self, env: Env, success_threshold: float = 0.5, episode_window: float = 0.1):
         super().__init__(env)
         self.success_threshold = success_threshold
         self.episode_window = episode_window
 
     def is_success(self) -> bool:
-        last_steps = max(int(len(self.success_buffer) * self.episode_window), 1)
+        if self.episode_window > 1.0:
+            last_steps = int(self.episode_window)
+        else: 
+            last_steps = max(int(len(self.success_buffer) * self.episode_window), 1)
+            
         return sum(self.success_buffer[-last_steps:]) / last_steps >= self.success_threshold
