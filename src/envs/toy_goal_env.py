@@ -1,19 +1,18 @@
 """Code for the ToyGoal environment used in the Thesis."""
+from enum import Enum
 import cv2
-import gym.spaces as spaces
+from gymnasium import Env, spaces
 import numpy as np
-from stable_baselines3.common.vec_env.base_vec_env import (
-    VecEnvObs,
-    VecEnvStepReturn,
-)
-from typing import Sequence
-from stable_baselines3.common.vec_env import VecEnvWrapper
-
+from typing import Any, Optional, SupportsFloat
 from src.envs.samplers.base_sampler import BaseSampler
-from src.envs.meta_env import MetaVecEnv
+from src.envs.meta_env import MetaMixin
 
+class ToyGoalMetaClasses(Enum):
+    REACH = 0
+    FLEE = 1
+    DONT_MOVE = 2
 
-class ToyGoalEnv(MetaVecEnv):
+class ToyGoalEnv(MetaMixin, Env[np.ndarray, np.ndarray]):
     """Simple 2D toy goal environment, where the agent has to reach a goal position.
 
     Actions space is in [-step_size, step_size]
@@ -22,7 +21,15 @@ class ToyGoalEnv(MetaVecEnv):
     The reward the agent receives is the L2 distance to the goal position.
     """
 
-    def __init__(self, num_envs: int, goal_sampler: BaseSampler, step_size=0.25, distance_norm=2, random_position=False):
+    def __init__(
+        self,
+        goal_sampler: BaseSampler,
+        step_size=0.25,
+        distance_norm=2,
+        success_distance=2,
+        random_position=False,
+        render_mode: Optional[str] = "rgb_array",
+    ):
         """Initialize the environment.
 
         Args:
@@ -30,81 +37,62 @@ class ToyGoalEnv(MetaVecEnv):
             step_size (float, optional): Step size of the agent. Defaults to 0.1.
             distance_norm (int, optional): Norm used to compute the reward. Defaults to 2.
         """
-        super().__init__(
-            num_envs,
-            observation_space=spaces.Box(-20, 20, (2,)),
-            action_space=spaces.Box(-step_size, step_size, (2,)),
-            goal_sampler=goal_sampler,
-        )
+        self.observation_space: spaces.Box = spaces.Box(-20, 20, (2,))
+        self.action_space: spaces.Box = spaces.Box(-step_size, step_size, (2,))
+        super().__init__(goal_sampler=goal_sampler)
+        self.render_mode = render_mode
+
         self.random_position = random_position
         self.step_size = step_size
         self.distance_norm = distance_norm
-        self.neutral_action = np.zeros((num_envs, 2))
+        self.neutral_action = np.zeros(2)
+        self.state = np.zeros(2)
+        self.success_distance = success_distance
 
-    def reset(self) -> VecEnvObs:
+    def reset(self, *, seed: int | None = None, options: dict[str, Any] | None = None) -> tuple[np.ndarray, dict[str, Any]]:
         """Reset the environment.
 
         Returns:
             VecEnvObs: The new obersavation after resetting the environment
         """
-        self.num_episode_steps = 0
+        super().reset(seed=seed, options=options)
+
         if self.random_position:
-            self.state = (np.random.random((self.num_envs, 2)).astype(np.float32) - 0.5) * 2 * self.observation_space.low
+            self.state = (np.random.random(2).astype(np.float32) - 0.5) * 2 * self.observation_space.low
         else:
-            self.state = np.zeros((self.num_envs, 2))
-        self.reset_current_goals()
-        return self.get_obs()
+            self.state = np.zeros(2)
+        return self._get_obs(), self._get_info()
 
-    def step_async(self, actions: np.ndarray) -> None:
-        """Register the next action to be performed in the simulation.
-
-        Args:
-            actions (np.ndarray): Array of [n_envs, 2] containing the actions
-        """
-        self.actions = actions
-
-    def step_wait(self) -> VecEnvStepReturn:
-        """Perform the stored actions in the environment.
-
-        Info will include the 'terminal_observation' and 'TimeLimit.truncated' key, when the timelimed is reached.
-        Also dones will be set to True.
-
-        Returns:
-            VecEnvStepReturn: Tuple of (obs, rewards, dones, infos)
-        """
-        self.state = self.state + self.actions
+    def step(self, action: np.ndarray) -> tuple[np.ndarray, SupportsFloat, bool, bool, dict[str, Any]]:
+        self.state = self.state + action
         self.state = np.clip(
             self.state,
             self.observation_space.low[:2],
             self.observation_space.high[:2],
         )
+        obs = self._get_obs()
+        reward = self.get_reward(action)
+        info = self._get_info()
 
-        rewards = self.get_reward()
-        self.num_episode_steps += 1
-        infos = [{"goal": goal, "goal_idx": goal_idx, "task": task} for goal, goal_idx, task in zip(self.goals, self.goals_idx, self.tasks)]
-        if self.num_episode_steps > 200:
-            dones = np.ones((self.num_envs,), dtype=bool)
-            obs = self.get_obs()
-            for observation, reward, info in zip(obs, rewards, infos):
-                info["TimeLimit.truncated"] = True
-                info["terminal_observation"] = observation
-                
-                info["is_success"] = reward > -2.0
-            obs = self.reset()
-        else:
-            dones = np.zeros((self.num_envs,), dtype=bool)
-            obs = self.get_obs()
-        return obs, rewards, dones, infos
+        if ToyGoalMetaClasses(self.task) == ToyGoalMetaClasses.REACH:
+            info["is_success"] = reward > -self.success_distance
+        elif ToyGoalMetaClasses(self.task) == ToyGoalMetaClasses.FLEE:
+            info["is_success"] = reward > self.success_distance
+        elif ToyGoalMetaClasses(self.task) == ToyGoalMetaClasses.DONT_MOVE:
+            info["is_success"] = reward > -0.1
 
-    def get_obs(self):
-        """Get a copy of the current state.
+        if self.render_mode == "human":
+            self.render()
 
-        Returns:
-            np.ndarray: Array of [n_envs, 2|4] containing the state and maybe the goal in the environment, depending if 'include_goal' is set.
-        """
+        return obs, reward, False, False, info
+
+    def _get_info(self):
+        return {"goal": self.goal, "goal_idx": self.goal_idx, "task": self.task}
+
+    def _get_obs(self):
         return np.copy(self.state)
 
-    def get_reward(self):
+    def get_reward(self, action: np.ndarray):
         """Get the reward for the current state.
 
         The reward is the negative 'distance_norm' distance from the agent to the goal.
@@ -112,9 +100,28 @@ class ToyGoalEnv(MetaVecEnv):
         Returns:
             np.ndarray: Reward as [n_envs, 1]
         """
-        return -np.linalg.norm(self.state - self.goals, ord=self.distance_norm, axis=-1)
+        distance = np.linalg.norm(self.state - self.goal, ord=self.distance_norm)
+        if ToyGoalMetaClasses(self.task) == ToyGoalMetaClasses.REACH:
+            return -distance
+        elif ToyGoalMetaClasses(self.task) == ToyGoalMetaClasses.FLEE:
+            return distance
+        elif ToyGoalMetaClasses(self.task) == ToyGoalMetaClasses.DONT_MOVE:
+            return -np.linalg.norm(action, ord=self.distance_norm)
+        else:
+            raise NotImplementedError()
 
-    def get_images(self, image_size=256) -> Sequence[np.ndarray]:
+    def render(self):
+        if self.render_mode == "human":
+            cv2.imshow("ToyGoal", self.get_image())
+        elif self.render_mode == "rgb_array":
+            return self.get_image()
+        else:
+            raise NotImplementedError()
+
+    def close(self) -> None:
+        cv2.destroyAllWindows()
+
+    def get_image(self, image_size=256) -> np.ndarray:
         """Get a list of images representing the environment.
 
         Args:
@@ -127,60 +134,49 @@ class ToyGoalEnv(MetaVecEnv):
         def scale_cord_to_img(x, low: float, high: float):
             return (x - low) / (high - low) * image_size
 
-        imgs = []
+        x, y = self.state
+        x_goal, y_goal = self.goal
 
-        for (x, y), (x_goal, y_goal) in zip(self.state, self.goals):
-            assert (
-                isinstance(self.observation_space, spaces.Box)
-                and isinstance(self.observation_space.low, np.ndarray)
-                and isinstance(self.observation_space.high, np.ndarray)
-            )
-            x = scale_cord_to_img(x, self.observation_space.low[0], self.observation_space.high[0])
-            y = scale_cord_to_img(y, self.observation_space.low[1], self.observation_space.high[1])
-            x_goal = scale_cord_to_img(
-                x_goal,
-                self.observation_space.low[0],
-                self.observation_space.high[0],
-            )
-            y_goal = scale_cord_to_img(
-                y_goal,
-                self.observation_space.low[1],
-                self.observation_space.high[1],
-            )
-            img = np.ones([image_size, image_size, 3], dtype=np.uint8)
-            img = cv2.rectangle(img, (0, 0), (image_size, image_size), (255, 255, 255), 2)
-            img = cv2.circle(img, (int(x), int(y)), 5, (0, 255, 0), -1)
+        assert (
+            isinstance(self.observation_space, spaces.Box)
+            and isinstance(self.observation_space.low, np.ndarray)
+            and isinstance(self.observation_space.high, np.ndarray)
+        )
+        x = scale_cord_to_img(x, self.observation_space.low[0], self.observation_space.high[0])
+        y = scale_cord_to_img(y, self.observation_space.low[1], self.observation_space.high[1])
+        x_goal = scale_cord_to_img(
+            x_goal,
+            self.observation_space.low[0],
+            self.observation_space.high[0],
+        )
+        y_goal = scale_cord_to_img(
+            y_goal,
+            self.observation_space.low[1],
+            self.observation_space.high[1],
+        )
+        img = np.ones([image_size, image_size, 3], dtype=np.uint8)
+        img = cv2.rectangle(img, (0, 0), (image_size, image_size), (255, 255, 255), 2)
+        img = cv2.circle(img, (int(x), int(y)), 5, (0, 255, 0), -1)
+        if ToyGoalMetaClasses(self.task) == ToyGoalMetaClasses.REACH:
             img = cv2.circle(img, (int(x_goal), int(y_goal)), 5, (255, 0, 0))
-            imgs.append(img)
+        elif ToyGoalMetaClasses(self.task) == ToyGoalMetaClasses.FLEE:
+            img = cv2.circle(img, (int(x_goal), int(y_goal)), 5, (0, 0, 255))
+        elif ToyGoalMetaClasses(self.task) == ToyGoalMetaClasses.DONT_MOVE:
+            img = cv2.circle(img, (int(x_goal), int(y_goal)), 5, (255, 0, 255))
 
-        return imgs
+        return img
 
+class ToyGoal1DEnv(ToyGoalEnv):
+    def step(self, action: np.ndarray):
+        action[1] = 0.0
+        return super().step(action)
 
-class ToyGoal1DEnv(VecEnvWrapper):
-    """Wrapper to turn the ToyGoalEnv into a 1d ToyGoal Problem."""
-
-    def __init__(
-        self,
-        venv: ToyGoalEnv,
-    ):
-        """Initialize the wrapper.
-
-        Args:
-            venv (ToyGoalEnv): Toygoal Environment to wrap.
-        """
-        super().__init__(venv)
-
-    def step_async(self, actions: np.ndarray) -> None:
-        actions[..., 1] = 0
-        self.venv.step_async(actions)
-
-    def step_wait(self) -> VecEnvStepReturn:
-        return self.venv.step_wait()
-
-    def reset(self) -> VecEnvObs:
-        obs = self.venv.reset()
-        assert isinstance(self.unwrapped, ToyGoalEnv)
-        self.unwrapped.goals[..., 1] = 0.0
-        self.unwrapped.state[..., 1] = 0.0
+    def reset(self, *, seed: int | None = None, options: dict[str, Any] | None = None):
+        obs, info = super().reset(seed=seed, options=options)
+        self.state[1] = 0.0
         obs[..., 1] = 0.0
-        return obs
+        return obs, info
+
+    def change_goal(self):
+        super().change_goal()
+        self.goal[1] = 0.0

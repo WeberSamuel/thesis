@@ -1,4 +1,4 @@
-from .cemrl_history_wrapper import CEMRLHistoryWrapper
+from .cemrl_wrapper import CEMRLWrapper
 from .cemrl_policy_wrapper import CEMRLPolicyWrapper
 
-__all__ = ["CEMRLHistoryWrapper", "CEMRLPolicyWrapper"]
+__all__ = ["CEMRLWrapper", "CEMRLPolicyWrapper"]

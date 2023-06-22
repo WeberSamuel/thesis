@@ -5,12 +5,12 @@ from stable_baselines3.common.buffers import ReplayBuffer
 from stable_baselines3.common.callbacks import CallbackList
 from stable_baselines3.common.policies import BasePolicy
 
-from src.callbacks import EvalCallback, ExplorationCallback, Plan2ExploreEvalCallback, SaveHeatmapCallback
+from src.callbacks import EvalInLogFolderCallback, ExplorationCallback, Plan2ExploreEvalCallback, SaveHeatmapCallback
 
 
 class DummyPolicy(BasePolicy):
     def __init__(self, *args, **kwargs) -> None:
-        del kwargs["use_sde"]
+        kwargs.pop("use_sde", None)
         super().__init__(*args, **kwargs)
 
     def _predict(self, *args, **kwargs):
@@ -25,7 +25,7 @@ class DummyReplayBuffer(ReplayBuffer):
 @dataclass
 class Callbacks:
     callbacks: Optional[CallbackList] = None
-    eval_callback: Optional[EvalCallback] = None
+    eval_callback: Optional[EvalInLogFolderCallback] = None
     save_heatmap_callback: Optional[SaveHeatmapCallback] = None
     eval_exploration_callback: Optional[Plan2ExploreEvalCallback] = None
     exploration_callback: Optional[ExplorationCallback] = None

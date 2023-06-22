@@ -1,33 +1,58 @@
-policy:
-  init_args:
-    latent_dim: 2
-env:
-  class_path: src.cemrl.wrappers.CEMRLHistoryWrapper
-  init_args:
-    venv:
-      class_path: src.envs.wrappers.heatmap.HeatmapWrapper
-      init_args:
-        venv:
-          class_path: src.envs.toy_goal_env.ToyGoalEnv
-          init_args:
-            num_envs: 256
-            goal_sampler: src.envs.samplers.random_box_sampler.RandomBoxSampler
-encoder_window: 30
-tensorboard_log: "logs/toy-goal-2d/p2e-cemrl"
-learn:
-  total_timesteps: 5_000_000
-callback:
-  eval_callback:
+main:
+  algorithm:
     init_args:
-      eval_env:
-        class_path: src.cemrl.wrappers.CEMRLHistoryWrapper
+      tensorboard_log: "logs/toy-goal-2d/p2e-cemrl"
+  policy:
+    init_args:
+      latent_dim: 2
+      num_classes: 1
+envs:
+  env:
+    class_path: src.envs.vec_env.SequentialVecEnv
+    init_args:
+      n_envs: 512
+      env:
+        class_path: src.cemrl.wrappers.CEMRLWrapper
         init_args:
-          venv:
+          time_limit: 200
+          env:
             class_path: src.envs.wrappers.heatmap.HeatmapWrapper
             init_args:
-              venv:
-                class_path: src.envs.toy_goal_env.ToyGoalEnv
+              env:
+                class_path: src.envs.wrappers.success.PercentageSuccessWrapper
                 init_args:
-                  num_envs: 16
-                  goal_sampler: src.envs.samplers.UniformCircleSampler
-          n_stack: ${encoder_window}
+                  env:
+                    class_path: src.envs.wrappers.non_stationary.NonStationaryWrapper
+                    init_args:
+                      change_after_timestep: 100
+                      env:
+                        class_path: src.envs.toy_goal_env.ToyGoalEnv
+                        init_args:
+                          goal_sampler: src.envs.samplers.random_box_sampler.RandomBoxSampler
+          n_stack: 30
+  eval_env:
+    class_path: src.envs.vec_env.SequentialVecEnv
+    init_args:
+      n_envs: 36
+      env:
+        class_path: src.cemrl.wrappers.CEMRLWrapper
+        init_args:
+          time_limit: 200
+          env:
+            class_path: src.envs.wrappers.heatmap.HeatmapWrapper
+            init_args:
+              env:
+                class_path: src.envs.wrappers.success.PercentageSuccessWrapper
+                init_args:
+                  env:
+                    class_path: src.envs.wrappers.non_stationary.NonStationaryWrapper
+                    init_args:
+                      change_after_timestep: 100
+                      env:
+                        class_path: src.envs.toy_goal_env.ToyGoalEnv
+                        init_args:
+                          goal_sampler: src.envs.samplers.UniformCircleSampler
+  exploration_env: ${envs.env}
+  exploration_eval_env: ${envs.eval_env}
+learn:
+  total_timesteps: 1_000_000

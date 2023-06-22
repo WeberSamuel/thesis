@@ -11,7 +11,10 @@ envs:
                     init_args:
                       env:
                         init_args:
-                          random_position: True
+                          goal_sampler: 
+                            class_path: src.envs.samplers.random_box_sampler.RandomBoxSampler
+                            init_args:
+                              num_tasks: 3
   eval_env:
     init_args:
       env:
@@ -24,10 +27,13 @@ envs:
                     init_args:
                       env:
                         init_args:
-                          random_position: True
+                          goal_sampler: 
+                            class_path: src.envs.samplers.UniformCircleSampler
+                            init_args:
+                              num_tasks: 3
   exploration_env: ${envs.env}
   exploration_eval_env: ${envs.eval_env}
 main:
   algorithm:
     init_args:
-      tensorboard_log: "logs/toy-goal-2d/p2e-cemrl/random_start"
+      tensorboard_log: "logs/toy-goal-1d/p2e-cemrl/multiple-tasks"

@@ -31,7 +31,6 @@ class Plan2ExplorePolicy(BasePolicy):
             num_actions (int, optional): Number of actions to sample. Defaults to 5.
             num_timesteps (int, optional): Number of timesteps to predict the future. Defaults to 20.
         """
-        del kwargs["use_sde"]
         super().__init__(*args, **kwargs)
         self.ensemble = ensemble
         self.latent_generator = latent_generator

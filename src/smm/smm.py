@@ -2,7 +2,7 @@ import os.path
 import sys
 from typing import Any, Dict, List, Optional, Tuple, Type, Union
 import dm_env
-from gym import spaces
+from gymnasium import spaces
 import numpy as np
 from stable_baselines3.common.buffers import ReplayBuffer
 from stable_baselines3.common.callbacks import BaseCallback

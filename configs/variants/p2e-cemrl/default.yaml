@@ -1,26 +1,14 @@
-policy_algorithm: src.cemrl.cemrl.CEMRLSACPolicy
-replay_buffer: src.cemrl.buffers.EpisodicBuffer
-learning_rate: 1e-4
-encoder_gradient_steps: 1
-policy_gradient_steps: 2
-policy:
-  class_path: src.cemrl.policies.CEMRLPolicy
 callback:
-  callbacks:
-    class_path: stable_baselines3.common.callbacks.CallbackList
+  save_heatmap_callback:
+    class_path: src.callbacks.SaveHeatmapCallback
     init_args:
-      callbacks:
-        - stable_baselines3.common.callbacks.ProgressBarCallback
-        - class_path: src.callbacks.CheckpointInLogFolderCallback
-          init_args:
-            save_freq: 100
-            save_path: checkpoints
+      save_freq: 100
   eval_callback:
     class_path: src.callbacks.EvalInLogFolderCallback
     init_args:
       log_path: eval
       eval_freq: 100
-      n_eval_episodes: 32
+      n_eval_episodes: 36
       callback_on_new_best:
         class_path: src.callbacks.RecordVideo
         init_args:
@@ -30,7 +18,7 @@ callback:
     init_args:
       log_path: p2e-eval
       eval_freq: 100
-      n_eval_episodes: 32
+      n_eval_episodes: 36
       callback_on_new_best:
         class_path: src.callbacks.RecordVideo
         init_args:
@@ -38,12 +26,32 @@ callback:
   exploration_callback:
     class_path: src.callbacks.ExplorationCallback
     init_args:
-      steps_per_rollout: 10
-      pre_train_steps: 500
-      exploration_algorithm:
-        class_path: src.plan2explore.plan2explore.Plan2Explore
-        init_args:
-          policy: src.plan2explore.policies.CEMRLExplorationPolicy
+      steps_per_rollout: 1
+      pre_train_steps: 2000
+  checkpoint_callback:
+    class_path: src.callbacks.CheckpointInLogFolderCallback
+    init_args:
+      save_freq: 100
+      save_path: checkpoints
+main:
+  algorithm: src.cemrl.cemrl.CEMRL
+  replay_buffer: src.cemrl.buffers.CEMRLReplayBuffer
+  policy: src.cemrl.policies.CEMRLPolicy
+  optimizer:
+    class_path: torch.optim.AdamW
+    init_args:
+      lr: 1e-3
+exploration:
+  algorithm: src.plan2explore.plan2explore.Plan2Explore
+  policy: src.plan2explore.policies.CEMRLExplorationPolicy
+  replay_buffer: src.cemrl.buffers.CEMRLReplayBuffer
+sub_algorithm: 
+  algorithm: 
+    class_path: stable_baselines3.sac.SAC
+    init_args:
+      learning_rate: 1e-3
+  policy: stable_baselines3.sac.policies.MultiInputPolicy
 learn:
   tb_log_name: default
   log_interval: 1
+  progress_bar: true

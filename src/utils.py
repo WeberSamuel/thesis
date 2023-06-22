@@ -1,6 +1,6 @@
 """Utility functions used in different parts of the project."""
 from typing import Any, Callable, Type
-from gym import spaces
+from gymnasium import spaces
 import numpy as np
 import torch as th
 from stable_baselines3.common.type_aliases import ReplayBufferSamples, DictReplayBufferSamples

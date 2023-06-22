@@ -4,9 +4,10 @@ import numpy as np
 import torch as th
 from stable_baselines3.common.policies import BasePolicy
 from stable_baselines3.common.vec_env import VecEnv
-from gym import Env
+from gymnasium import Env, spaces
 from src.cemrl.networks import Encoder
 from src.plan2explore.networks import Ensemble
+from stable_baselines3.common.type_aliases import Schedule
 
 
 class Plan2ExplorePolicy(BasePolicy):
@@ -18,7 +19,9 @@ class Plan2ExplorePolicy(BasePolicy):
 
     def __init__(
         self,
-        env: VecEnv | Env,
+        observation_space: spaces.Space,
+        action_space: spaces.Space,
+        lr_schedule: Schedule,
         ensemble: Ensemble,
         num_actions=3,
         num_timesteps=1,
@@ -32,7 +35,7 @@ class Plan2ExplorePolicy(BasePolicy):
             num_actions (int, optional): Number of actions to sample. Defaults to 5.
             num_timesteps (int, optional): Number of timesteps to predict the future. Defaults to 20.
         """
-        super().__init__(env.observation_space, env.action_space)
+        super().__init__(observation_space, action_space)
         self.ensemble = ensemble
         self.num_actions = num_actions
         self.num_timesteps = num_timesteps
@@ -93,8 +96,9 @@ class Plan2ExplorePolicy(BasePolicy):
 
 class CEMRLExplorationPolicy(Plan2ExplorePolicy):
     def __init__(self, *args, encoder: Encoder, **kwargs):
-        super().__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs, latent_generator=encoder)
         self.encoder = encoder
+        self.optimizer = self.optimizer_class(self.parameters(), **self.optimizer_kwargs)
 
     def _predict(self, observation: Dict[str, th.Tensor], deterministic: bool = False) -> th.Tensor:  # type: ignore
         with th.no_grad():
@@ -106,22 +110,21 @@ class CEMRLExplorationPolicy(Plan2ExplorePolicy):
 class Plan2ExploreMPCPolicy(Plan2ExplorePolicy):
     def __init__(
         self,
-        env: VecEnv | Env,
-        ensemble: Ensemble,
+        *args,
         num_actions=3,
         num_timesteps=3,
         mpc_loss_threshold=-0.1,
         mpc_max_optim_steps=15,
         mpc_lr=1e-1,
-        reduce_num_timesteps_after_num_threshold=3,
+        reduce_loss_threshold_after_num_threshold=3,
         max_timesteps=10,
     ):
-        super().__init__(env, ensemble, num_actions, num_timesteps)
+        super().__init__(*args, num_actions=num_actions, num_timesteps=num_timesteps)
         self.mpc_loss_threshold = mpc_loss_threshold
         self.mpc_max_optim_steps = mpc_max_optim_steps
         self.mpc_lr = mpc_lr
         self.times_threshold_reached = 0
-        self.reduce_num_timesteps_after_num_threshold = reduce_num_timesteps_after_num_threshold
+        self.reduce_loss_threshold_after_num_threshold = reduce_loss_threshold_after_num_threshold
         self.max_timesteps = max_timesteps
         self.action_low = th.tensor(self.action_space.low).cuda()  # type: ignore
         self.action_high = th.tensor(self.action_space.high).cuda()  # type: ignore
@@ -192,28 +195,15 @@ class Plan2ExploreMPCPolicy(Plan2ExplorePolicy):
             self.times_threshold_reached = self.times_threshold_reached + (1 if loss < self.mpc_loss_threshold else -1)
             self.times_threshold_reached = np.clip(
                 self.times_threshold_reached,
-                -self.reduce_num_timesteps_after_num_threshold,
-                self.reduce_num_timesteps_after_num_threshold,
+                -self.reduce_loss_threshold_after_num_threshold,
+                self.reduce_loss_threshold_after_num_threshold,
             )
-            if (
-                self.times_threshold_reached <= -self.reduce_num_timesteps_after_num_threshold
-                and self.num_timesteps < self.max_timesteps
-            ):
-                self.times_threshold_reached = 0
-                self.num_timesteps += 1
-                self.action = th.cat(
-                    [
-                        self.action,
-                        th.tensor(
-                            [[[self.action_space.sample() for _ in range(n_envs)] for _ in range(self.num_actions)]],
-                            device=device,
-                        ),
-                    ]
-                )
-            elif self.times_threshold_reached >= self.reduce_num_timesteps_after_num_threshold and self.num_timesteps > 1:
-                self.times_threshold_reached = 0
-                self.num_timesteps -= 1
-                self.action = self.action[: self.num_timesteps]
+            if self.times_threshold_reached <= -self.reduce_loss_threshold_after_num_threshold:
+                self.times_threshold_reached = self.reduce_loss_threshold_after_num_threshold
+                self.mpc_loss_threshold /= 2
+            elif self.times_threshold_reached >= self.reduce_loss_threshold_after_num_threshold:
+                self.times_threshold_reached = -self.reduce_loss_threshold_after_num_threshold
+                self.mpc_loss_threshold *= 2
 
         if self._is_collecting:
             action_ensemble_var = state_vars.sum(dim=(0, 3))
@@ -228,6 +218,7 @@ class CEMRLMPCExplorationPolicy(Plan2ExploreMPCPolicy):
     def __init__(self, *args, encoder: Encoder, **kwargs):
         super().__init__(*args, **kwargs)
         self.encoder = encoder
+        self.optimizer = self.optimizer_class(self.parameters(), **self.optimizer_kwargs)
 
     def _predict(self, observation: Dict[str, th.Tensor], deterministic: bool = False) -> th.Tensor:  # type: ignore
         with th.no_grad():

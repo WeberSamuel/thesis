@@ -3,7 +3,7 @@ from typing import List
 import torch as th
 from stable_baselines3.common.callbacks import BaseCallback, CallbackList
 from stable_baselines3.common.torch_layers import create_mlp
-from gym.spaces import flatdim
+from gymnasium.spaces import flatdim
 from src.cemrl.cemrl import CEMRL
 from src.envs.meta_env import MetaVecEnv
 from src.cemrl.policies import CEMRLPolicy
