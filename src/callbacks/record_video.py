@@ -26,7 +26,7 @@ class RecordVideo(BaseCallback):
         while parent is not None:
             if isinstance(parent, EvalCallback):
                 break
-        video_env = VecVideoRecorder(parent.eval_env, self.save_path, lambda x: x == 0, name_prefix=f"{self.num_timesteps}")
+        video_env = VecVideoRecorder(parent.eval_env, self.save_path, lambda x: x == 0, video_length=2000, name_prefix=f"{self.num_timesteps}")
         episode_rewards, episode_lengths = evaluate_policy(
             parent.model,
             video_env,
@@ -37,7 +37,8 @@ class RecordVideo(BaseCallback):
             warn=parent.warn,
         )
         assert video_env.video_recorder is not None
-        frames = th.tensor(np.array(video_env.video_recorder.recorded_frames))[None].permute(0, 1, -1, 2, 3)
+        video_env.video_recorder.disable_logger = True
+        frames = th.tensor(np.array(video_env.video_recorder.recorded_frames))[None].permute(0, 1, -1, 2, 3)[:, -200::2]
         self.logger.record(self.local_save_path, Video(frames, fps=30))
         video_env.close()
         

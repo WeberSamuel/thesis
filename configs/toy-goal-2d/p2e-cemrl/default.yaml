@@ -47,7 +47,7 @@ envs:
                   env:
                     class_path: src.envs.wrappers.non_stationary.NonStationaryWrapper
                     init_args:
-                      change_after_timestep: 100
+                      change_after_timestep: 150
                       env:
                         class_path: src.envs.toy_goal_env.ToyGoalEnv
                         init_args:

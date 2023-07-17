@@ -1,11 +1,9 @@
-from random import sample
-from typing import List
 import torch as th
-from stable_baselines3.common.callbacks import BaseCallback, CallbackList
+from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.torch_layers import create_mlp
 from gymnasium.spaces import flatdim
 from src.cemrl.cemrl import CEMRL
-from src.envs.meta_env import MetaVecEnv
+from src.envs.meta_env import MetaMixin
 from src.cemrl.policies import CEMRLPolicy
 from stable_baselines3.common.buffers import DictReplayBuffer
 
@@ -17,7 +15,7 @@ class LatentToGoalCallback(BaseCallback):
 
     def _init_callback(self) -> None:
         assert isinstance(self.model.policy, CEMRLPolicy)
-        assert self.training_env is not None and isinstance(self.training_env.unwrapped, MetaVecEnv)
+        assert self.training_env is not None and isinstance(self.training_env.unwrapped, MetaMixin)
         latent_dim = self.model.policy.latent_dim
         goal_dim = flatdim(self.training_env.unwrapped.goal_sampler.goal_space)
         self.network = th.nn.Sequential(*create_mlp(latent_dim, goal_dim, [64, 64]))

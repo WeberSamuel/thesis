@@ -35,7 +35,7 @@ class NonStationaryWrapper(Wrapper):
             (True, True, True): ChangeModes.AFTER_LOCATION_AND_TIMESTEP_WITH_PROBABILITY,
         }[(change_after_timestep is not None, change_probability is not None, change_after_location is not None)] # type: ignore
 
-        self.unwrapped: MetaMixin
+        self.unwrapped: MetaMixin # type: ignore
 
         if self.mode == ChangeModes.PROBABILITY:
             self.change_probability = 0.0 if change_probability is None else change_probability
@@ -43,6 +43,8 @@ class NonStationaryWrapper(Wrapper):
             self.change_probability = 1.0 if change_probability is None else change_probability
 
         self.change_after_timestep = np.inf if change_after_timestep is None else change_after_timestep
+
+        self.timestep = 0
 
         self.change_after_location = None
         if change_after_location is not None:
@@ -57,15 +59,18 @@ class NonStationaryWrapper(Wrapper):
         if self.mode in [ChangeModes.AFTER_TIMESTEP, ChangeModes.AFTER_TIMESTEP_WITH_PROBABILITY]:
             if np.random.random() < self.change_probability and self.change_after_timestep <= self.timestep:
                 self.unwrapped.change_goal()
+                info["goal_changed"] = True
                 self.timestep = 0
 
         if self.mode == ChangeModes.PROBABILITY and np.random.random() < self.change_probability:
             self.unwrapped.change_goal()
+            info["goal_changed"] = True
 
         if self.change_after_location is not None and not self.change_after_location.contains(obs):
             if np.random.random() < self.change_probability:
                 if self.timestep > self.change_after_timestep:
                     self.unwrapped.change_goal()
+                    info["goal_changed"] = True
                     self.timestep = 0
 
         return obs, reward, terminated, truncated, info

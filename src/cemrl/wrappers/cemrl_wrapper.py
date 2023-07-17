@@ -26,12 +26,14 @@ class CEMRLWrapper(ObservationWrapper):
         self.normalize_obs_action = normalize_obs_action
 
         assert isinstance(env.unwrapped, MetaMixin)
+        assert isinstance(env.action_space, spaces.Box)
         self.unwrapped: MetaMixin
+        self.action_space: spaces.Box
 
-        self.observation_space: spaces.Dict = self._get_obs_space(env)
+        self.observation_space: spaces.Dict = self._get_obs_space()
 
 
-    def _get_obs_space(self, env) -> spaces.Dict:
+    def _get_obs_space(self) -> spaces.Dict:
         if isinstance(self.observation_space, spaces.Box):
             obs_space = spaces.Dict({"observation": self.observation_space})
         elif isinstance(self.observation_space, spaces.Dict):
@@ -47,9 +49,9 @@ class CEMRLWrapper(ObservationWrapper):
         obs_space = spaces.Dict(
             {
                 **obs_space.spaces,
-                "goal": env.unwrapped.goal_sampler.goal_space,
-                "goal_idx": spaces.Box(0, env.unwrapped.goal_sampler.num_goals, (1,)),
-                "task": spaces.Box(0, env.unwrapped.goal_sampler.num_tasks, (1,)),
+                "goal": self.unwrapped.goal_sampler.goal_space,
+                "goal_idx": spaces.Box(0, self.unwrapped.goal_sampler.num_goals, (1,)),
+                "task": spaces.Box(0, len(self.unwrapped.goal_sampler.available_tasks), (1,)),
                 "action": action_obs_space,
                 "reward": spaces.Box(-np.inf, np.inf, (1,)),
             }
@@ -69,15 +71,10 @@ class CEMRLWrapper(ObservationWrapper):
             for k, v in self.observation_space.spaces.items()
             if isinstance(v, spaces.Box)
         }
-        obs = None
-        info = None
 
-        self.env.reset(**kwargs)
-        for _ in range(self.n_stack):
-            action = self.unwrapped.neutral_action
-            if action is None:
-                action = self.action_space.sample()
-            obs, reward, terminated, truncated, info = self.step(action)
+        obs, info = self.env.reset(**kwargs)
+        action = np.zeros_like(self.action_space.low)
+        obs = self.observation(obs, action, 0.0, info)
         return obs, info
 
     def observation(self, obs, action, reward, info) -> Dict[str, Any]:

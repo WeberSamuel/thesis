@@ -11,12 +11,19 @@ class MetaMixin:
         self.goal_sampler = goal_sampler
         self.neutral_action: Optional[np.ndarray] = None
         super().__init__(*args, **kwargs)
-        self.goal_sampler._init_sampler(self)
+        if isinstance(goal_sampler, BaseSampler):
+            self.goal_sampler._init_sampler(self)
 
     def change_goal(self):
         self.goal_idx = np.random.randint(0, len(self.goal_sampler.goals))
         self.goal = self.goal_sampler.goals[self.goal_idx]
         self.task = self.goal_sampler.tasks[self.goal_idx]
+
+    def add_meta_info(self, info: dict) -> dict:
+        info["goal_idx"] = self.goal_idx
+        info["goal"] = self.goal
+        info["task"] = self.task
+        return info
 
     def reset(self, *args, **kwargs):
         self.change_goal()

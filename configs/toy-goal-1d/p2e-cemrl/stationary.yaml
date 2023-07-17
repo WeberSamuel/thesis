@@ -1,0 +1,29 @@
+main:
+  algorithm:
+    init_args:
+      tensorboard_log: "logs/toy-goal-1d/p2e-cemrl/stationary"
+envs:
+  env:
+    init_args:
+      env:
+        init_args:
+          env:
+            init_args:
+              env:
+                init_args:
+                  env:
+                    init_args:
+                      change_after_timestep: 9999999
+  eval_env:
+    init_args:
+      env:
+        init_args:
+          env:
+            init_args:
+              env:
+                init_args:
+                  env:
+                    init_args:
+                      change_after_timestep: 9999999
+  exploration_env: ${envs.env}
+  exploration_eval_env: ${envs.eval_env}

@@ -1,13 +1,14 @@
 import matplotlib.pyplot as plt
 import numpy as np
-from src.cemrl.buffers import CEMRLBuffer
-from src.callbacks import ExplorationCallback, LogLatentMedian
+from callbacks.exploration_callback import ExplorationCallback
+from src.cemrl.buffers import EpisodicBuffer
+from LogLatentMedian import LogLatentMedian
 from src.plan2explore.policies import CEMRLExplorationPolicy
 from src.cemrl.policies import CEMRLPolicy
-from src.cemrl.wrappers.cemrl_history_wrapper import CEMRLHistoryWrapper
+from cemrl.wrappers.cemrl_wrapper import CEMRLHistoryWrapper
 from src.cemrl.cemrl import CEMRL
-from src.env.toy_goal_env import ToyGoal1DEnv, ToyGoalEnv
-from src.env.samplers import RandomBoxSampler
+from src.envs.toy_goal_env import ToyGoal1DEnv, ToyGoalEnv
+from src.envs.samplers import RandomBoxSampler
 from src.plan2explore.plan2explore import Plan2Explore
 from stable_baselines3.common.callbacks import CallbackList, ProgressBarCallback
 import torch as th
@@ -23,7 +24,7 @@ def test_1d_latents():
         learning_rate=1e-3,
         policy_kwargs={"num_classes": 1, "latent_dim": 1},
         device="cuda",
-        replay_buffer_class=CEMRLBuffer,
+        replay_buffer_class=EpisodicBuffer,
         replay_buffer_kwargs={"original_obs_space": env.original_obs_space},
         encoder_gradient_steps=1.,
         policy_gradient_steps=lambda x: 0.,
@@ -44,7 +45,7 @@ def test_1d_latents():
             "ensemble": algorithm.policy.decoder,
             "encoder": algorithm.policy.encoder,
         },
-        replay_buffer_class=CEMRLBuffer,
+        replay_buffer_class=EpisodicBuffer,
         replay_buffer_kwargs={"original_obs_space": env.original_obs_space},
         device="cuda",
         gradient_steps=0,

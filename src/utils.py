@@ -1,71 +1,41 @@
-"""Utility functions used in different parts of the project."""
-from typing import Any, Callable, Type
-from gymnasium import spaces
+"""This module contains utility functions."""
 import numpy as np
-import torch as th
-from stable_baselines3.common.type_aliases import ReplayBufferSamples, DictReplayBufferSamples
+from gym import spaces
+from typing import Any, Callable
 
 
-def apply_function_to_type(data: Any, apply_on_type: Type, function: Callable):
-    """Apply a function to each element of type apply_on_type in data.
+def apply_function_to_type(data: Any, apply_on_type: type, function: Callable) -> Any:
+    """
+    Recursively applies a function to all elements of a nested data structure of a given type.
 
-    Args:
-        data (Any): data to process.
-                    If an list, tuple, dict is passed, each element is processed recursively.
-        apply_on_type (Type): Type on which to apply the function.
-        function (Callable): Function that is applied on each entry, that is  the apply_on_type
-
-    Returns:
-        Any: data with function applied to all elements of type apply_on_type
+    :param data: The data structure to apply the function to.
+    :param apply_on_type: The type of elements to apply the function to.
+    :param function: The function to apply.
+    :return: The modified data structure.
     """
     if isinstance(data, apply_on_type):
         return function(data)
-
-    if isinstance(data, dict):
+    elif isinstance(data, dict):
         return {key: apply_function_to_type(value, apply_on_type, function) for key, value in data.items()}
-
-    if isinstance(data, tuple):
-        return tuple(apply_function_to_type(value, apply_on_type, function) for value in data)
-
-    if isinstance(data, list):
+    elif isinstance(data, (list, tuple)):
         return [apply_function_to_type(value, apply_on_type, function) for value in data]
 
     return data
 
 
-def remove_dim_from_space(space: spaces.Dict | spaces.Box, dim: int):
+def remove_dim_from_space(space: spaces.Space, dim: int = 0) -> spaces.Space:
+    """
+    Removes a dimension from a gym.spaces.Space object.
+
+    :param space: The space to remove the dimension from.
+    :param dim: The index of the dimension to remove.
+    :return: A new space with the specified dimension removed.
+    """
     if isinstance(space, spaces.Dict):
-        return {key: remove_dim_from_space(value) for key, value in space.spaces.items()}
-    return spaces.Box(low=np.take(space.low, 0, axis=dim), high=np.take(space.high, 0, axis=dim))
-
-
-def get_random_encoder_window_samples(samples: DictReplayBufferSamples, encoder_window:int):
-    device = samples.actions.device
-    episode_length = samples.actions.shape[1]
-
-    # filter out encoder windows that contain other epochs
-    dones = samples.dones.squeeze(-1)
-    dones = dones.roll(1)
-    invalid = th.where(dones)
-    invalid_idx = invalid[1][None] + th.arange(0, encoder_window, device=device)[:, None]
-    invalid_idx = invalid_idx.clamp_max(episode_length - 1).view(-1)
-    invalid = (invalid[0].repeat(encoder_window),  invalid_idx)
-    idx_probs = th.ones_like(dones)
-    idx_probs[invalid] = 0
-    
-    encoder_timestep_idx = th.multinomial(idx_probs, 1, replacement=True).squeeze(-1)
-    encoder_timestep_idx = encoder_timestep_idx[:, None] - th.arange(0, encoder_window, device=device)[None]
-    encoder_timestep_idx = encoder_timestep_idx.flip(1)
-
-    obs_gather = encoder_timestep_idx[..., None].expand(-1, -1, *samples.observations["observation"].shape[2:])
-    action_gather = encoder_timestep_idx[..., None].expand(-1, -1, *samples.actions.shape[2:])
-    reward_gather = encoder_timestep_idx[..., None].expand(-1, -1, *samples.rewards.shape[2:])
-    dones_gather = encoder_timestep_idx[..., None].expand(-1, -1, *samples.dones.shape[2:])
-    # Forward pass through encoder
-    return ReplayBufferSamples(
-        observations=th.gather(samples.observations["observation"], 1, obs_gather),
-        actions=th.gather(samples.actions, 1, action_gather),
-        rewards=th.gather(samples.rewards, 1, reward_gather),
-        next_observations=th.gather(samples.next_observations["observation"], 1, obs_gather),
-        dones=th.gather(samples.dones, 1, dones_gather)
-    )
+        return spaces.Dict({key: remove_dim_from_space(value, dim) for key, value in space.spaces.items()})
+    elif isinstance(space, spaces.Box):
+        return spaces.Box(low=np.take(space.low, dim, axis=dim), high=np.take(space.high, dim, axis=dim))
+    elif isinstance(space, spaces.Tuple):
+        return spaces.Tuple(remove_dim_from_space(s, dim) for s in space.spaces)
+    else:
+        raise NotImplementedError()

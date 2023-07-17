@@ -1,11 +1,14 @@
 main:
   algorithm:
     init_args:
-      tensorboard_log: "logs/toy-goal-1d/p2e-cemrl"
+      tensorboard_log: "logs/cheetah/p2e-cemrl"
   policy:
     init_args:
       latent_dim: 1
       num_classes: 1
+  replay_buffer:
+    init_args:
+      use_bin_weighted_decoder_target_sampling: false
 envs:
   env:
     class_path: src.envs.vec_env.SequentialVecEnv
@@ -18,41 +21,45 @@ envs:
           env:
             class_path: src.envs.wrappers.heatmap.HeatmapWrapper
             init_args:
+              idxs_2d: []
               env:
                 class_path: src.envs.wrappers.success.PercentageSuccessWrapper
                 init_args:
                   env:
                     class_path: src.envs.wrappers.non_stationary.NonStationaryWrapper
                     init_args:
-                      change_after_timestep: 100
+                      change_after_location: [[-100, 100]]
                       env:
-                        class_path: src.envs.toy_goal_env.ToyGoal1DEnv
+                        class_path: src.envs.half_cheetah_env.HalfCheetahEnv
                         init_args:
-                          goal_sampler: src.envs.samplers.random_box_sampler.RandomBoxSampler
+                          render_mode: rgb_array
+                          goal_sampler: src.envs.samplers.RandomSampler
           n_stack: 30
   eval_env:
     class_path: src.envs.vec_env.SequentialVecEnv
     init_args:
-      n_envs: 36
+      n_envs: 1
       env:
         class_path: src.cemrl.wrappers.CEMRLWrapper
         init_args:
-          time_limit: 200
+          time_limit: 300
           env:
             class_path: src.envs.wrappers.heatmap.HeatmapWrapper
             init_args:
+              idxs_2d: []
               env:
                 class_path: src.envs.wrappers.success.PercentageSuccessWrapper
                 init_args:
                   env:
                     class_path: src.envs.wrappers.non_stationary.NonStationaryWrapper
                     init_args:
-                      change_after_timestep: 100
+                      change_after_timestep: 150
                       env:
-                        class_path: src.envs.toy_goal_env.ToyGoal1DEnv
+                        class_path: src.envs.half_cheetah_env.HalfCheetahEnv
                         init_args:
-                          goal_sampler: src.envs.samplers.UniformCircleSampler
+                          render_mode: rgb_array
+                          goal_sampler: src.envs.samplers.LinspaceSampler
   exploration_env: ${envs.env}
   exploration_eval_env: ${envs.eval_env}
 learn:
-  total_timesteps: 200_000
+  total_timesteps: 1_000_000

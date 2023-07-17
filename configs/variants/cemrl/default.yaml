@@ -13,21 +13,6 @@ callback:
         class_path: src.callbacks.RecordVideo
         init_args:
           save_path: eval
-  eval_exploration_callback:
-    class_path: src.callbacks.Plan2ExploreEvalCallback
-    init_args:
-      log_path: p2e-eval
-      eval_freq: 100
-      n_eval_episodes: 36
-      callback_on_new_best:
-        class_path: src.callbacks.RecordVideo
-        init_args:
-          save_path: p2e-eval
-  exploration_callback:
-    class_path: src.callbacks.ExplorationCallback
-    init_args:
-      steps_per_rollout: 1
-      pre_train_steps: 2000
   checkpoint_callback:
     class_path: src.callbacks.CheckpointInLogFolderCallback
     init_args:
@@ -41,9 +26,6 @@ main:
     class_path: torch.optim.AdamW
     init_args:
       lr: 1e-3
-exploration:
-  algorithm: src.plan2explore.plan2explore.Plan2Explore
-  policy: src.plan2explore.policies.CEMRLExplorationPolicy
 sub_algorithm: 
   algorithm: 
     class_path: stable_baselines3.sac.SAC

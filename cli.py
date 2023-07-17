@@ -180,17 +180,18 @@ if __name__ == "__main__":
     parser.add_argument("subcommand", choices=["train", "eval"])
     parser.add_argument("--wandb", type=bool, default=True)
     cfg = parser.parse_args()
-    init_cfg = parser.instantiate_classes(cfg)
 
-    command = cfg.pop("subcommand")
     use_wandb = cfg.pop("wandb")
+    command = cfg.pop("subcommand")
+    if use_wandb:
+        env, *log_path_parts = cfg.main.algorithm.init_args.tensorboard_log.replace("logs/", "").split("/")
+        name = ' '.join(log_path_parts + [cfg.learn.tb_log_name])
+        run = wandb.init(project="cemrl", sync_tensorboard=True, save_code=True, group=f"{env} {name}", tags=[env, *log_path_parts], config=cfg.as_dict())
+
+    init_cfg = parser.instantiate_classes(cfg)
     init_cfg.learn.callback.callbacks.append(SaveConfigCallback(parser, cfg))
 
     if command == "train":
-        if use_wandb:
-            env, *log_path_parts = cfg.main.algorithm.init_args.tensorboard_log.replace("logs/", "").split("/")
-            name = ' '.join(log_path_parts + [cfg.learn.tb_log_name])
-            wandb.init(project="cemrl", sync_tensorboard=True, save_code=True, group=f"{env}-{name}", tags=[env, name], config=cfg.as_dict())
         init_cfg.main.algorithm.learn(**init_cfg.learn)
     elif command == "eval":
         raise NotImplementedError()

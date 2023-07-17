@@ -1,8 +1,0 @@
-learning_starts: 51200
-callback:
-  exploration_callback:
-    init_args:
-      steps_per_rollout: 0
-      pre_train_steps: 0
-learn:
-  tb_log_name: "no_exploration"

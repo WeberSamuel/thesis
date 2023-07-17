@@ -5,14 +5,14 @@ from src.envs.samplers.base_sampler import BaseSampler
 
 
 class UniformCircleSampler(BaseSampler):
-    def __init__(self, radius: float = 0.9, num_tasks=1, num_goals=16) -> None:
-        super().__init__(num_tasks=num_tasks, num_goals=num_goals)
+    def __init__(self, radius: float = 12.5, available_tasks=[0], num_goals=16) -> None:
+        super().__init__(available_tasks=available_tasks, num_goals=num_goals)
         self.radius = radius
 
     def _get_goal_space(self) -> spaces.Space:
         return spaces.flatten_space(self.env.observation_space)
 
-    def sample(self, num_goals: int, num_tasks: int) -> Tuple[np.ndarray, np.ndarray]:
+    def sample(self, num_goals: int, available_tasks: list[int]) -> Tuple[np.ndarray, np.ndarray]:
         assert isinstance(self.goal_space, spaces.Box)
         assert self.goal_space.shape[0] == 2
         high = self.goal_space.high
@@ -29,4 +29,4 @@ class UniformCircleSampler(BaseSampler):
         x = center[0] + radius * np.cos(theta)
         y = center[1] + radius * np.sin(theta)
         goals = np.stack([x, y], axis=-1)
-        return np.tile(goals, (num_tasks, 1)), np.arange(num_tasks).repeat(num_goals)
+        return np.tile(goals, (len(available_tasks), 1)), np.array(available_tasks).repeat(num_goals)

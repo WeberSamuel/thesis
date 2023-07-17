@@ -14,9 +14,12 @@ class HeatmapWrapper(ObservationWrapper):
         assert isinstance(space, spaces.Box)
         
         self.heatmap_idxs = np.where(~(np.isinf(space.low) | np.isinf(space.high)))[0]
-        self.heatmap_linspaces = np.stack(
-            [np.linspace(space.low[idx], space.high[idx], bin_size_per_dimension) for idx in self.heatmap_idxs]
-        )
+        if len(self.heatmap_idxs) == 0:
+            self.heatmap_linspaces = np.zeros((0, 0))
+        else:
+            self.heatmap_linspaces = np.stack(
+                [np.linspace(space.low[idx], space.high[idx], bin_size_per_dimension) for idx in self.heatmap_idxs]
+            )
         self.heatmaps = np.zeros((len(self.heatmap_idxs), bin_size_per_dimension))
         self.heatmaps_2d = np.zeros((len(idxs_2d), bin_size_per_dimension, bin_size_per_dimension))
 

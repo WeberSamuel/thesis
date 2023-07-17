@@ -14,7 +14,7 @@ envs:
                           goal_sampler: 
                             class_path: src.envs.samplers.random_box_sampler.RandomBoxSampler
                             init_args:
-                              num_tasks: 3
+                              available_tasks: [0,1,2]
   eval_env:
     init_args:
       env:
@@ -30,7 +30,7 @@ envs:
                           goal_sampler: 
                             class_path: src.envs.samplers.UniformCircleSampler
                             init_args:
-                              num_tasks: 3
+                              available_tasks: [0,1,2]
   exploration_env: ${envs.env}
   exploration_eval_env: ${envs.eval_env}
 main:

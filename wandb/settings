@@ -1,0 +1,7 @@
+[default]
+entity = webersa
+project = cemrl
+base_url = https://api.wandb.ai
+disabled = true
+mode = offline
+

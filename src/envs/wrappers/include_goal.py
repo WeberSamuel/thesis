@@ -7,10 +7,10 @@ from src.envs.meta_env import MetaMixin
 class IncludeGoalWrapper(Wrapper):
     def __init__(self, env: Env):
         super().__init__(env)
-        self.observation_space = self._get_obs_space(env)
+        self.observation_space = self._get_obs_space()
 
         assert isinstance(self.unwrapped, MetaMixin)
-        self.unwrapped: MetaMixin
+        self.unwrapped: MetaMixin # type: ignore
 
     def step(self, action: Any) -> tuple[Any, SupportsFloat, bool, bool, dict[str, Any]]:
         obs, reward, terminated, truncated, info = super().step(action)
@@ -30,11 +30,11 @@ class IncludeGoalWrapper(Wrapper):
         }
         return observation
 
-    def _get_obs_space(self, env):
+    def _get_obs_space(self):
         obs_space = (
-            env.observation_space.spaces
-            if isinstance(env.observation_space, spaces.Dict)
-            else {"observation": env.observation_space}
+            self.observation_space.spaces
+            if isinstance(self.observation_space, spaces.Dict)
+            else {"observation": self.observation_space}
         )
 
         assert "goal" not in obs_space
@@ -44,9 +44,9 @@ class IncludeGoalWrapper(Wrapper):
         obs_space = spaces.Dict(
             {
                 **obs_space,
-                "goal": env.unwrapped.goal_sampler.goal_space,
-                "goal_idx": spaces.Box(0, env.unwrapped.goal_sampler.num_goals, (1,)),
-                "task": spaces.Box(0, env.unwrapped.goal_sampler.num_tasks, (1,)),
+                "goal": self.unwrapped.goal_sampler.goal_space,
+                "goal_idx": spaces.Box(0, self.unwrapped.goal_sampler.num_goals, (1,)),
+                "task": spaces.Box(0, len(self.unwrapped.goal_sampler.available_tasks), (1,)),
             }
         )
 

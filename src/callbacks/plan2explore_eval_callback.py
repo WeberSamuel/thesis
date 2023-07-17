@@ -1,5 +1,5 @@
 import os
-from typing import Optional, Union
+from typing import Any, Dict, Optional, Union
 
 import numpy as np
 from gymnasium import Env
@@ -46,15 +46,15 @@ class Plan2ExploreEvalCallback(EvalInLogFolderCallback):
     def _init_callback(self) -> None:
         if self.eval_model is None:
             self.eval_model = self.model
-        return super()._init_callback()
+        super()._init_callback()
+        self.log_prefix = "p2e_eval"
 
     """Modified EvalCallback that supports the Plan2ExplorePolicy.
     Since the Plan2ExplorePolicy is normally set to maximize the disagreement,
     the evaluation has to set a flag in the policy,
     such that it tries to maximize the future reward instead.
     """
-
-    def _on_step(self) -> bool:
+    def _eval_step(self) -> bool:
         assert self.eval_model is not None and isinstance(self.eval_model.policy, Plan2ExplorePolicy)
         self.eval_model.policy._is_collecting = False
         continue_training = True
@@ -141,3 +141,6 @@ class Plan2ExploreEvalCallback(EvalInLogFolderCallback):
 
         self.eval_model.policy._is_collecting = True
         return continue_training
+    
+    def _on_step(self) -> bool:
+        return self.step_wrapper(self._eval_step)
