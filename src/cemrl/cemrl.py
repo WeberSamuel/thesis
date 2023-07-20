@@ -86,7 +86,7 @@ class CEMRL(OffPolicyAlgorithm):
         self.policy.sub_policy_algorithm.replay_buffer = self.replay_buffer
         self.policy.sub_policy_algorithm.set_logger(self.logger)
 
-        self.scaler = th.cuda.amp.GradScaler()
+        # self.scaler = th.cuda.amp.GradScaler()
         return result
 
     def train(self, gradient_steps: int, batch_size: int) -> None:
@@ -151,8 +151,8 @@ class CEMRL(OffPolicyAlgorithm):
                     dec_observations, dec_samples.actions, dec_next_observations, z, return_raw=True
                 )
 
-                state_vars += th.var(state_estimate, dim=0).sum().item()
-                reward_vars += th.var(reward_estimate, dim=0).sum().item()
+                # state_vars += th.var(state_estimate, dim=0).sum().item()
+                # reward_vars += th.var(reward_estimate, dim=0).sum().item()
 
                 reward_loss = th.sum((reward_estimate - dec_samples.rewards[None].expand(reward_estimate.shape)) ** 2, dim=-1)
                 reward_loss = th.mean(reward_loss, dim=-1)
@@ -184,24 +184,26 @@ class CEMRL(OffPolicyAlgorithm):
             loss = -elbo
             # loss = encoder_loss
 
-            self.policy.optimizer.zero_grad()
+        self.policy.optimizer.zero_grad()
 
-            # Backward pass: compute gradient of the loss with respect to model parameters
-            self.scaler.scale(loss).backward()  # type: ignore
+        # Backward pass: compute gradient of the loss with respect to model parameters
+        # self.scaler.scale(loss).backward()  # type: ignore
+        loss.backward()
 
-            # Calling the step function on an Optimizer makes an update to its parameters
-            self.scaler.step(self.policy.optimizer)
-            self.scaler.update()
+        # Calling the step function on an Optimizer makes an update to its parameters
+        # self.scaler.step(self.policy.optimizer)
+        self.policy.optimizer.step()
+        # self.scaler.update()
 
-            loss = loss / batch_size
-            state_loss = th.mean(state_losses)
-            reward_loss = th.mean(reward_losses)
+        loss = loss / batch_size
+        state_loss = th.mean(state_losses)
+        reward_loss = th.mean(reward_losses)
 
-            self.logger.record_mean("reconstruction/loss", loss.item())
-            self.logger.record_mean("reconstruction/state_loss", state_loss.item())
-            self.logger.record_mean("reconstruction/state_var", state_vars / self.policy.num_classes)
-            self.logger.record_mean("reconstruction/reward_loss", reward_loss.item())
-            self.logger.record_mean("reconstruction/reward_var", reward_vars / self.policy.num_classes)
+        self.logger.record_mean("reconstruction/loss", loss.item())
+        self.logger.record_mean("reconstruction/state_loss", state_loss.item())
+        # self.logger.record_mean("reconstruction/state_var", state_vars / self.policy.num_classes)
+        self.logger.record_mean("reconstruction/reward_loss", reward_loss.item())
+        # self.logger.record_mean("reconstruction/reward_var", reward_vars / self.policy.num_classes)
 
         return loss.item()
 

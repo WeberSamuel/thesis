@@ -11,7 +11,7 @@ class MetaMixin:
         self.goal_sampler = goal_sampler
         self.neutral_action: Optional[np.ndarray] = None
         super().__init__(*args, **kwargs)
-        if isinstance(goal_sampler, BaseSampler):
+        if isinstance(goal_sampler, BaseSampler) and not self.goal_sampler.initialized:
             self.goal_sampler._init_sampler(self)
 
     def change_goal(self):

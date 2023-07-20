@@ -1,3 +1,6 @@
 [submodule "submodules/url_benchmark"]
 	path = submodules/url_benchmark
 	url = https://github.com/PhilippWidmann/url_benchmark.git
+[submodule "submodules/SimpleDreamer"]
+	path = submodules/SimpleDreamer
+	url = https://github.com/kc-ml2/SimpleDreamer.git

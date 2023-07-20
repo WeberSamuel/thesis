@@ -4,32 +4,80 @@ import numpy as np
 from gymnasium.spaces import Box
 from src.envs.samplers.base_sampler import BaseSampler
 from src.envs.meta_env import MetaMixin
+import cv2
+
 
 class HalfCheetahMetaClasses(Enum):
     VELOCITY = 0
     DIRECTION = 1
     GOAL = 2
 
-class HalfCheetahEnv(MetaMixin, GymHalfCheetahEnv):
-    def __init__(self, goal_sampler: BaseSampler, *args, **kwargs) -> None:
-        super().__init__(goal_sampler, *args, **kwargs)
-        if self._exclude_current_positions_from_observation:
-            self.observation_space = Box(
-                low=-np.inf, high=np.inf, shape=(17,), dtype=np.float32
-            )
-        else:
-            self.observation_space = Box(
-                low=-np.inf, high=np.inf, shape=(18,), dtype=np.float32
-            )
 
+class HalfCheetahEnv(MetaMixin, GymHalfCheetahEnv):
+    def __init__(self, goal_sampler: BaseSampler, *args, width: int = 256, height: int = 256, **kwargs) -> None:
+        super().__init__(goal_sampler, width=width, height=height, *args, **kwargs)
+        if self._exclude_current_positions_from_observation:
+            self.observation_space = Box(low=-np.inf, high=np.inf, shape=(17,), dtype=np.float32)
+        else:
+            self.observation_space = Box(low=-np.inf, high=np.inf, shape=(18,), dtype=np.float32)
 
     def step(self, action):
         obs, reward, terminated, truncated, info = super().step(action)
-        if self.task == HalfCheetahMetaClasses.VELOCITY:
+        if self.task == HalfCheetahMetaClasses.VELOCITY.value:
             reward = np.abs(info["x_velocity"] - self.goal) + info["reward_ctrl"]
-        elif self.task == HalfCheetahMetaClasses.DIRECTION:
+        elif self.task == HalfCheetahMetaClasses.DIRECTION.value:
             reward = (np.sign(info["x_velocity"]) == np.sign(self.goal)) + info["reward_ctrl"]
-        elif self.task == HalfCheetahMetaClasses.GOAL:
+        elif self.task == HalfCheetahMetaClasses.GOAL.value:
             reward = -np.abs(info["x_position"] - self.goal) + info["reward_ctrl"]
         self.add_meta_info(info)
+        self.last_info = info
         return obs, reward, terminated, truncated, info
+
+    def reset(self, *args, **kwargs):
+        self.last_info = None
+        return super().reset(*args, **kwargs)
+
+    def render(self):
+        if self.render_mode == "rgb_array":
+            img = super().render().copy()
+            img = cv2.putText(
+                img,
+                f"Task {HalfCheetahMetaClasses(self.task).name}: {self.goal:.2f}",
+                (10, 15),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.5,
+                (255, 0, 0),
+                1,
+            )
+            if self.last_info is not None:
+                if self.task == HalfCheetahMetaClasses.DIRECTION.value:
+                    img = cv2.putText(
+                        img,
+                        f"Velocity: {self.last_info['x_velocity']:.2f}",
+                        (10, 30),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.5,
+                        (0, 255, 0),
+                        1,
+                    )
+                elif self.task == HalfCheetahMetaClasses.GOAL.value:
+                    img = cv2.putText(
+                        img,
+                        f"Position: {self.last_info['x_position']:.2f}",
+                        (10, 30),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.5,
+                        (0, 255, 0),
+                        1,
+                    )
+                elif self.task == HalfCheetahMetaClasses.VELOCITY.value:
+                    img = cv2.putText(
+                        img,
+                        f"Velocity: {self.last_info['x_velocity']:.2f}",
+                        (10, 30),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.5,
+                        (0, 255, 0),
+                        1,
+                    )
+            return img

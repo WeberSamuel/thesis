@@ -42,12 +42,12 @@ class Plan2ExploreEvalCallback(EvalInLogFolderCallback):
             warn,
         )
         self.eval_model = eval_model
+        self.log_prefix = "p2e_eval"
 
     def _init_callback(self) -> None:
         if self.eval_model is None:
             self.eval_model = self.model
         super()._init_callback()
-        self.log_prefix = "p2e_eval"
 
     """Modified EvalCallback that supports the Plan2ExplorePolicy.
     Since the Plan2ExplorePolicy is normally set to maximize the disagreement,

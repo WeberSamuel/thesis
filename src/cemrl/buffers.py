@@ -316,8 +316,8 @@ class NoLinkingCemrlReplayBuffer(CEMRLReplayBuffer):
 
 
 class EpisodeLinkingCemrlReplayBuffer(NoLinkingCemrlReplayBuffer):
-    def __init__(self, *args, num_linked_episodes=5, **kwargs):
-        super().__init__(*args, **kwargs)
+    def __init__(self, *args, num_linked_episodes=5, use_bin_weighted_decoder_target_sampling=False, **kwargs):
+        super().__init__(*args, use_bin_weighted_decoder_target_sampling=use_bin_weighted_decoder_target_sampling, **kwargs)
         self.num_linked_episodes = num_linked_episodes
 
     def _build_decoder_index(self):

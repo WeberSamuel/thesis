@@ -9,20 +9,12 @@ callback:
       log_path: eval
       eval_freq: 100
       n_eval_episodes: 36
-      callback_on_new_best:
-        class_path: src.callbacks.RecordVideo
-        init_args:
-          save_path: eval
   eval_exploration_callback:
     class_path: src.callbacks.Plan2ExploreEvalCallback
     init_args:
       log_path: p2e-eval
       eval_freq: 100
       n_eval_episodes: 36
-      callback_on_new_best:
-        class_path: src.callbacks.RecordVideo
-        init_args:
-          save_path: p2e-eval
   exploration_callback:
     class_path: src.callbacks.ExplorationCallback
     init_args:

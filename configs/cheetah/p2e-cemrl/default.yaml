@@ -1,64 +1,93 @@
+callback:
+  save_heatmap_callback:
+    init_args:
+      save_freq: 3200
+  eval_callback:
+    init_args:
+      eval_freq: 3200
+  eval_exploration_callback:
+    init_args:
+      eval_freq: 3200
+  checkpoint_callback:
+    init_args:
+      save_freq: 3200
+  exploration_callback:
+    init_args:
+      pre_train_steps: 64000
 main:
   algorithm:
     init_args:
+      policy_grad_steps: 60
       tensorboard_log: "logs/cheetah/p2e-cemrl"
+      train_freq: [32, "step"]
   policy:
     init_args:
       latent_dim: 1
       num_classes: 1
-  replay_buffer:
+      net_complexity: 6.0
+  replay_buffer: src.cemrl.buffers.EpisodeLinkingCemrlReplayBuffer
+sub_algorithm:
+  algorithm:
     init_args:
-      use_bin_weighted_decoder_target_sampling: false
+      learning_rate: 3e-4
+exploration:
+  algorithm:
+    init_args:
+      train_freq: [32, "step"]
 envs:
   env:
-    class_path: src.envs.vec_env.SequentialVecEnv
-    init_args:
-      n_envs: 512
-      env:
-        class_path: src.cemrl.wrappers.CEMRLWrapper
-        init_args:
-          time_limit: 200
-          env:
-            class_path: src.envs.wrappers.heatmap.HeatmapWrapper
-            init_args:
-              idxs_2d: []
-              env:
-                class_path: src.envs.wrappers.success.PercentageSuccessWrapper
-                init_args:
-                  env:
-                    class_path: src.envs.wrappers.non_stationary.NonStationaryWrapper
-                    init_args:
-                      change_after_location: [[-100, 100]]
-                      env:
-                        class_path: src.envs.half_cheetah_env.HalfCheetahEnv
-                        init_args:
-                          render_mode: rgb_array
-                          goal_sampler: src.envs.samplers.RandomSampler
-          n_stack: 30
+    n_envs: 16
+    vec_env: stable_baselines3.common.vec_env.DummyVecEnv
+    cemrl_wrapper:
+      class_path: src.cemrl.wrappers.CEMRLWrapper
+      init_args:
+        time_limit: 200
+        n_stack: 30
+    heatmap:
+      class_path: src.envs.wrappers.heatmap.HeatmapWrapper
+      init_args:
+        idxs_2d: []
+    success: src.envs.wrappers.success.PercentageSuccessWrapper
+    non_stationary:
+      class_path: src.envs.wrappers.non_stationary.NonStationaryWrapper
+      init_args:
+        change_after_timestep: 100
+    env:
+      class_path: src.envs.half_cheetah_env.HalfCheetahEnv
+      init_args:
+        render_mode: rgb_array
+        goal_sampler: 
+          class_path: src.envs.samplers.RandomSampler
+          init_args:
+            available_tasks: [2]
+            max_goal_radius: 15.0
+            one_sided: true
   eval_env:
-    class_path: src.envs.vec_env.SequentialVecEnv
-    init_args:
-      n_envs: 1
-      env:
-        class_path: src.cemrl.wrappers.CEMRLWrapper
-        init_args:
-          time_limit: 300
-          env:
-            class_path: src.envs.wrappers.heatmap.HeatmapWrapper
-            init_args:
-              idxs_2d: []
-              env:
-                class_path: src.envs.wrappers.success.PercentageSuccessWrapper
-                init_args:
-                  env:
-                    class_path: src.envs.wrappers.non_stationary.NonStationaryWrapper
-                    init_args:
-                      change_after_timestep: 150
-                      env:
-                        class_path: src.envs.half_cheetah_env.HalfCheetahEnv
-                        init_args:
-                          render_mode: rgb_array
-                          goal_sampler: src.envs.samplers.LinspaceSampler
+    n_envs: 16
+    vec_env: stable_baselines3.common.vec_env.DummyVecEnv
+    cemrl_wrapper:
+      class_path: src.cemrl.wrappers.CEMRLWrapper
+      init_args:
+        time_limit: 300
+    heatmap:
+      class_path: src.envs.wrappers.heatmap.HeatmapWrapper
+      init_args:
+        idxs_2d: []
+    success: src.envs.wrappers.success.PercentageSuccessWrapper
+    non_stationary:
+      class_path: src.envs.wrappers.non_stationary.NonStationaryWrapper
+      init_args:
+        change_after_timestep: 150
+    env:
+      class_path: src.envs.half_cheetah_env.HalfCheetahEnv
+      init_args:
+        render_mode: rgb_array
+        goal_sampler: 
+          class_path: src.envs.samplers.LinspaceSampler
+          init_args:
+            available_tasks: [2]
+            max_goal_radius: 15.0
+            one_sided: true
   exploration_env: ${envs.env}
   exploration_eval_env: ${envs.eval_env}
 learn:
