@@ -1,7 +1,6 @@
 from typing import List, Optional
 import torch as th
 from torch.distributions import Categorical, Normal
-from stable_baselines3.common.torch_layers import create_mlp
 
 from src.cemrl.types import CEMRLObsTensorDict
 
@@ -24,7 +23,6 @@ class Encoder(th.nn.Module):
         self.class_encoder = th.nn.Sequential(th.nn.Linear(encoder_out_dim, num_classes), th.nn.Softmax(dim=-1))
         self.gauss_encoder_list = th.nn.ModuleList([th.nn.Linear(encoder_out_dim, latent_dim * 2) for _ in range(num_classes)])
 
-    @th.autocast("cuda")
     def forward(self, x: CEMRLObsTensorDict):
         # used in evaluation. Next_obs is not available, therefore simulate by removing last item
         y_distribution, z_distributions = self.encode(
@@ -33,7 +31,6 @@ class Encoder(th.nn.Module):
         y, z = self.sample(y_distribution, z_distributions)
         return y, z
 
-    @th.autocast("cuda")
     def encode(self, obs, action, reward, next_obs):
         encoder_input = th.cat([obs, action, reward, next_obs], dim=-1)
         _, m = self.encoder(encoder_input)
@@ -47,7 +44,6 @@ class Encoder(th.nn.Module):
         z_distributions = [Normal(mu, sigma) for mu, sigma in zip(mus, sigmas)]
         return y_distribution, z_distributions
 
-    @th.autocast("cuda")
     def sample(
         self,
         y_distribution: Categorical,

@@ -4,3 +4,6 @@
 [submodule "submodules/SimpleDreamer"]
 	path = submodules/SimpleDreamer
 	url = https://github.com/kc-ml2/SimpleDreamer.git
+[submodule "submodules/dreamerv3-torch"]
+	path = submodules/dreamerv3-torch
+	url = https://github.com/NM512/dreamerv3-torch.git

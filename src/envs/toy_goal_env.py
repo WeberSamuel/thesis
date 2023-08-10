@@ -17,7 +17,6 @@ class ToyGoalEnv(MetaMixin, Env[np.ndarray, np.ndarray]):
 
     Actions space is in [-step_size, step_size]
     Observation space is in [-1, 1]
-    The environment is automatically timelimited to 200 timesteps.
     The reward the agent receives is the L2 distance to the goal position.
     """
 

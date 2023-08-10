@@ -1,272 +1,144 @@
-import os.path
-import sys
-from typing import Any, Dict, List, Optional, Tuple, Type, Union
-import dm_env
-from gymnasium import spaces
+from typing import Any, Dict, Tuple
+
 import numpy as np
-from stable_baselines3.common.buffers import ReplayBuffer
 from stable_baselines3.common.callbacks import BaseCallback
-from stable_baselines3.common.noise import ActionNoise
-from stable_baselines3.common.policies import BasePolicy
-from stable_baselines3.common.type_aliases import GymEnv, MaybeCallback, RolloutReturn, Schedule, TrainFreq
-from stable_baselines3.common.vec_env import VecEnv
+from stable_baselines3.common.vec_env.base_vec_env import VecEnv, VecEnvObs, VecEnvStepReturn
 import torch as th
-from dm_env._environment import StepType
-from dm_env.specs import BoundedArray
+from gymnasium import Space, spaces
+from stable_baselines3.common.noise import ActionNoise
+from stable_baselines3.common.type_aliases import GymEnv, MaybeCallback, Schedule
+from stable_baselines3.common.buffers import DictReplayBuffer
 
-sys.path.append("submodules\\url_benchmark")
-from submodules.url_benchmark.dmc import ExtendedTimeStep
-from submodules.url_benchmark.pretrain import generate_model
-from stable_baselines3.common.off_policy_algorithm import OffPolicyAlgorithm
-from stable_baselines3.common.policies import BasePolicy
-from stable_baselines3.common.torch_layers import (
-    BaseFeaturesExtractor,
-    FlattenExtractor,
-)
+from src.core.state_aware_algorithm import StateAwareOffPolicyAlgorithm, StateStorage
+from src.smm.policies import SMMPolicy, SMMAgent
+from stable_baselines3.common.vec_env import VecEnvWrapper
 
 
-class URLBAgent(th.nn.Module):
+class SMM(StateAwareOffPolicyAlgorithm):
     def __init__(
         self,
-        env,
-        eval_env,
-        exploration_type,
-        experiment_log_dir,
-        max_timesteps,
-        pretraining_steps,
-        ensemble_id=None,
-    ):
-        super().__init__()
-        # Expect the specific agent to be specified in the format urlb_rnd
-        agent_type = exploration_type.split("_", 1)
-        if len(agent_type) == 2:
-            agent_type = agent_type[1]
-        else:
-            raise ValueError("Specific URLB agent unspecified or not understood.")
-        self.agent_type = agent_type
-        self.pretraining_steps = pretraining_steps
-        self.agent_type = agent_type
-
-        self.workdir = os.path.join(experiment_log_dir, "exploration")
-        if not os.path.exists(self.workdir):
-            os.makedirs(self.workdir)
-
-        self.train_env = URLBAgent.URLBEnvWrapper(env, max_timesteps)
-        self.eval_env = URLBAgent.URLBEnvWrapper(eval_env, max_timesteps)
-
-        cfg_override = [
-            f"agent={self.agent_type}",
-            f"save_video=false",
-            f"num_train_frames={pretraining_steps+1}",
-            f"snapshots={[pretraining_steps]}",
-            f'snapshot_dir="."',
-        ]
-
-        self.workspace, self.pretrained = generate_model(
-            self.train_env,
-            self.eval_env,
-            cfg_override,
-            self.workdir,
-            snapshot_prefix=f"agent_{ensemble_id}_" if ensemble_id is not None else "",
-        )
-
-    def train_agent(self, steps=0):
-        self.workspace.train(additional_frames=steps, save_snapshots=False)
-
-    def save_agent(self, epoch):
-        self.workspace.save_snapshot(epoch)
-
-    def get_action(self, obs, state):
-        if state is None:
-            state = {}
-
-        if "meta" not in state:
-            state["meta"] = meta = self.workspace.agent.init_meta()
-        else:
-            meta = state["meta"]
-
-        with th.no_grad():
-            action = self.workspace.agent.act(obs, meta, self.workspace.global_step, eval_mode=False)
-        return action
-    
-    def forward(self, *args, **kwargs):
-        return self.get_action(*args, **kwargs)
-
-
-    class URLBEnvWrapper(dm_env.Environment):
-        def __init__(self, env, max_timesteps):
-            self.env = env
-            self.timestep = 0
-            self.max_timesteps = max_timesteps
-            self._observation_spec = BoundedArray(
-                shape=tuple(env.observation_space.shape),
-                dtype=env.observation_space.dtype,
-                minimum=env.observation_space.low,
-                maximum=env.observation_space.high,
-                name="observation",
-            )
-            self._action_spec = BoundedArray(
-                shape=tuple(env.action_space.shape),
-                dtype=env.action_space.dtype,
-                minimum=env.action_space.low,
-                maximum=env.action_space.high,
-                name="action",
-            )
-
-        def reset(self) -> ExtendedTimeStep:
-            self.timestep = 0
-            ob = self.env.reset()
-            action = np.zeros(self._action_spec.shape, dtype=self._action_spec.dtype)
-            return ExtendedTimeStep(StepType.FIRST, 0, 0.99, ob[0].astype(np.float32), action)  # Todo: 0.99 should be the discount factor
-
-        def step(self, action) -> ExtendedTimeStep:
-            self.timestep += 1
-            assert self.timestep <= self.max_timesteps
-            ob, reward, done, info = self.env.step(action[None])
-            step_type = StepType.LAST if self.timestep == self.max_timesteps or done[0] else StepType.MID
-            return ExtendedTimeStep(step_type, reward[0], 0.99, ob[0].astype(np.float32), action)
-
-        def observation_spec(self):
-            return self._observation_spec
-
-        def action_spec(self):
-            return self._action_spec
-
-
-class EnsembleURLBAgent(th.nn.Module):
-    def __init__(self, num_ensemble_agents, *args, **kwargs):
-        super().__init__()
-        self.num_ensemble_agents = num_ensemble_agents
-        self.agents = th.nn.ModuleList([URLBAgent(*args, ensemble_id=i, **kwargs) for i in range(num_ensemble_agents)])
-
-    def get_action(self, obs, state:dict|None):
-        if state is None:
-            state = {}
-            state["id"] = id = np.random.randint(0, self.num_ensemble_agents)
-        else:
-            id = state["id"]
-        agent = self.agents[id]
-        assert isinstance(agent, URLBAgent)
-        action = agent.get_action(obs, state)
-        return action, state
-    
-    def forward(self, *args, **kwargs):
-        return self.get_action(*args, **kwargs)
-
-    def train_agent(self, steps=0):
-        for idx, agent in enumerate(self.agents):
-            assert isinstance(agent, URLBAgent)
-            agent.train_agent(steps=steps)
-
-
-class SMMPolicy(BasePolicy):
-    def __init__(
-        self,
-        observation_space: spaces.Space,
-        action_space: spaces.Space,
-        features_extractor_class: Type[BaseFeaturesExtractor] = FlattenExtractor,
-        features_extractor_kwargs: Optional[Dict[str, Any]] = None,
-        features_extractor: Optional[BaseFeaturesExtractor] = None,
-        normalize_images: bool = True,
-        optimizer_class: Type[th.optim.Optimizer] = th.optim.Adam,
-        optimizer_kwargs: Optional[Dict[str, Any]] = None,
-        squash_output: bool = False,
-    ):
-        super().__init__(
-            observation_space,
-            action_space,
-            squash_output=squash_output,
-            features_extractor_class=features_extractor_class,
-            features_extractor_kwargs=features_extractor_kwargs,
-            features_extractor=features_extractor,
-            normalize_images=normalize_images,
-            optimizer_class=optimizer_class,
-            optimizer_kwargs=optimizer_kwargs,
-        )
-
-
-class SMMPolicy(BasePolicy):
-    def __init__(self, *args, use_sde=False, **kwargs):
-        super().__init__(*args, **kwargs)
-
-    def _predict(self, observation, deterministic: bool = False):
-        raise NotImplementedError()
-
-
-class SMMExplorationAlgorithm(OffPolicyAlgorithm):
-    def __init__(
-        self,
-        env: GymEnv | str,
-        buffer_size: int = 1000000,
-        learning_starts: int = 100,
+        policy: str | type[SMMPolicy],
+        env: GymEnv,
+        learning_rate: float | Schedule = 1e-3,
         batch_size: int = 256,
-        action_noise: ActionNoise | None = None,
-        replay_buffer_class: Type[ReplayBuffer] | None = None,
-        replay_buffer_kwargs: Dict[str, Any] | None = None,
+        buffer_size: int = 1000000,
+        device: th.device | str = "auto",
+        gamma: float = 0.99,
+        learning_starts: int = 100_000,
+        log_prefix: str = "smm",
+        monitor_wrapper: bool = True,
         optimize_memory_usage: bool = False,
         policy_kwargs: Dict[str, Any] | None = None,
-        stats_window_size: int = 100,
-        tensorboard_log: str | None = None,
-        verbose: int = 0,
-        device: str = "auto",
-        monitor_wrapper: bool = True,
+        replay_buffer_class: type[DictReplayBuffer] | None = DictReplayBuffer,
+        replay_buffer_kwargs: Dict[str, Any] | None = None,
         seed: int | None = None,
-        use_sde: bool = False,
-        sde_sample_freq: int = -1,
-        use_sde_at_warmup: bool = False,
-        sde_support: bool = True,
-        gradient_steps=1
+        stats_window_size: int = 100,
+        supported_action_spaces: Tuple[type[Space], ...] | None = None,
+        tau: float = 0.005,
+        tensorboard_log: str | None = None,
+        train_freq: int | Tuple[int, str] = (1, "step"),
+        verbose: int = 0,
+        z_dim: int = 4,
+        action_noise: ActionNoise | None = None,
     ):
-        super().__init__(
-            SMMPolicy,
-            env,
-            0.0,
-            buffer_size,
-            learning_starts,
-            batch_size,
-            0.005,
-            0.99,
-            (100, "episode"),
-            gradient_steps,
-            action_noise,
-            replay_buffer_class,
-            replay_buffer_kwargs,
-            optimize_memory_usage,
-            policy_kwargs,
-            stats_window_size,
-            tensorboard_log,
-            verbose,
-            device,
-            True,
-            monitor_wrapper,
-            seed,
-            use_sde,
-            sde_sample_freq,
-            use_sde_at_warmup,
-            sde_support,
-        )
-        self.smm = EnsembleURLBAgent(5, self.env, self.env, "urlb_smm", "exploration", 200, 20000)
-        self._setup_model()
-        self.pretrained = False
-        self.state = None
+        policy_kwargs = policy_kwargs or {}
+        policy_kwargs["z_dim"] = z_dim
 
-    def predict(
-        self,
-        observation: np.ndarray | Dict[str, np.ndarray],
-        state: Dict | None = None,
-        episode_start: np.ndarray | None = None,
-        deterministic: bool = False,
-    ) -> Tuple[np.ndarray, Tuple[np.ndarray, ...] | None]:
-        action, self.state = self.smm.get_action(observation[0].astype(np.float32), self.state)
-        return action
-    
-    def _update_info_buffer(self, infos: List[Dict[str, Any]], dones: np.ndarray | None = None) -> None:
-        if np.any(dones):
-            self.state = None
-        return super()._update_info_buffer(infos, dones)
-    
+        super().__init__(
+            policy=policy,
+            env=env,
+            learning_rate=learning_rate,
+            buffer_size=buffer_size,
+            learning_starts=learning_starts,
+            batch_size=batch_size,
+            tau=tau,
+            gamma=gamma,
+            train_freq=train_freq,
+            gradient_steps=-1,
+            action_noise=action_noise,
+            replay_buffer_class=replay_buffer_class,
+            replay_buffer_kwargs=replay_buffer_kwargs,
+            optimize_memory_usage=optimize_memory_usage,
+            policy_kwargs=policy_kwargs,
+            stats_window_size=stats_window_size,
+            tensorboard_log=tensorboard_log,
+            verbose=verbose,
+            device=device,
+            support_multi_env=True,
+            monitor_wrapper=monitor_wrapper,
+            seed=seed,
+            sde_support=False,
+            supported_action_spaces=supported_action_spaces,
+        )
+        if log_prefix is not None:
+            self.log_prefix = log_prefix + "/"
+        else:
+            self.log_prefix = ""
+
+        self.env: SMMWrapper = SMMWrapper(self.env, z_dim)  # type: ignore
+        self.observation_space = self.env.observation_space
+        self.gradient_steps = self.n_envs // 8
+
+        self._setup_model()
+        self.policy: SMMPolicy
+        self.state_storage = SMMStateStorage()
+
+    def _get_replay_buffer_iterator(self, batch_size, num_batches):
+        if self.replay_buffer is None:
+            raise ValueError("The replay buffer is not initialized.")
+        for _ in range(num_batches):
+            batch = self.replay_buffer.sample(batch_size, self.get_vec_normalize_env())
+            obs = batch.observations["observation"][:, -1]  # type: ignore
+            next_obs = batch.next_observations["observation"][:, -1]  # type: ignore
+            z = batch.observations["meta"]  # type: ignore
+            actions = batch.actions
+            dones = batch.dones
+            extr_reward = batch.rewards
+
+            yield obs, actions, next_obs, z, dones, extr_reward
+
     def train(self, gradient_steps: int, batch_size: int) -> None:
-        if not self.pretrained:
-            self.smm.train_agent(0) # Pretrain
-            self.pretrained = True
-        self.smm.train_agent(steps=gradient_steps)
+        smm: SMMAgent
+        for i, smm in enumerate(self.policy.smm_ensemble):  # type: ignore
+            metrics = smm.update(self._get_replay_buffer_iterator(batch_size, gradient_steps), self.num_timesteps)
+            for k, v in metrics.items():
+                self.logger.record(f"{self.log_prefix}{k}_{i}", v)
+
+
+class SMMWrapper(VecEnvWrapper):
+    def __init__(self, venv: VecEnv, z_dim: int):
+        if isinstance(venv.observation_space, spaces.Dict):
+            obs_space = venv.observation_space.spaces
+        else:
+            obs_space = {"observation": venv.observation_space}
+        obs_space = spaces.Dict(
+            {
+                **obs_space,
+                "meta": spaces.Box(low=0, high=1, shape=(z_dim,), dtype=np.float32),
+            }
+        )
+        super().__init__(venv, observation_space=obs_space)
+        self.z_dim = z_dim
+
+    def reset(self) -> VecEnvObs:
+        obs = self.venv.reset()
+        if not isinstance(obs, dict):
+            obs = {"observation": obs}
+
+        return obs  # type: ignore
+
+    def step_wait(self) -> VecEnvStepReturn:
+        obs, reward, dones, infos = self.venv.step_wait()
+        if not isinstance(obs, dict):
+            obs = {"observation": obs}
+        return obs, reward, dones, infos  # type: ignore
+
+
+class SMMStateStorage(StateStorage):
+    def _change_obs(self, obs: Dict[str, np.ndarray]):
+        obs["meta"] = self.policy_state[1]
+
+    def _change_terminal_obs(self, terminals: list[Dict[str, np.ndarray] | None]):
+        for i, terminal in enumerate(terminals):
+            if terminal is not None:
+                terminal["meta"] = self.policy_state[1][i]

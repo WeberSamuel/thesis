@@ -32,13 +32,17 @@ class EvalInLogFolderCallback(EvalCallback):
         if isinstance(info, dict):
             self.success_reward = +info.get("is_success", False)
             self.total_count += 1
-        if locals_["i"] == 0:
+        if self.callback_counter % self.eval_env.num_envs == 0:
             self.video_env.capture_frame()
+        self.callback_counter += 1
 
     def step_wrapper(self, step_function):
+        is_going_to_evaluate = self.eval_freq > 0 and self.n_calls % self.eval_freq == 0
+        if not is_going_to_evaluate:
+            return step_function()
         self.success_reward = 0
         self.total_count = 0
-        is_going_to_evaluate = self.eval_freq > 0 and self.n_calls % self.eval_freq == 0
+        self.callback_counter = 0
         self.video_env = VideoRecorder(self.eval_env, os.path.join(self.video_dir, str(self.num_timesteps) + ".mp4"), enabled=is_going_to_evaluate, disable_logger=True)
         result = step_function()
         if is_going_to_evaluate:

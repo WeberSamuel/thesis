@@ -11,7 +11,6 @@ from scipy.stats import binned_statistic_dd
 
 from src.cemrl.types import CEMRLObsTensorDict, CEMRLSacPolicyTensorInput
 
-
 class CEMRLReplayBuffer(DictReplayBuffer):
     """Replay buffer used in CEMRL."""
 
@@ -20,7 +19,7 @@ class CEMRLReplayBuffer(DictReplayBuffer):
         buffer_size: int,
         observation_space: spaces.Dict,
         action_space: Space,
-        encoder: th.nn.Module,
+        encoder: th.nn.Module | None = None,
         exploration_buffer_size: int = 1_000_000,
         n_envs=1,
         use_bin_weighted_decoder_target_sampling: bool = True,
@@ -52,7 +51,6 @@ class CEMRLReplayBuffer(DictReplayBuffer):
         self.goal_changes = np.zeros(buffer_size, bool)
         self.timeouts = np.zeros(buffer_size, bool)
         self.grouped_goal_idx = None
-
         self.use_bin_weighted_decoder_target_sampling = use_bin_weighted_decoder_target_sampling
 
     def size(self) -> int:
@@ -92,19 +90,21 @@ class CEMRLReplayBuffer(DictReplayBuffer):
         """
         self.is_decoder_index_build = False
 
-        pos = self.explore_pos if self.is_exploring else self.pos
+        is_exploring = self.is_exploring or np.any([info.get("is_exploration", False) for info in infos])
+
+        pos = self.explore_pos if is_exploring else self.pos
         pos = np.arange(self.n_envs) + pos
 
         self.observations[pos] = obs["observation"][:, -1]
         self.next_observations[pos] = next_obs["observation"][:, -1]
         self.goal_idxs[pos] = obs["goal_idx"][:, -1].squeeze(-1)
-        self.actions[pos] = next_obs["action"][:, -1]
-        self.rewards[pos] = next_obs["reward"][:, -1, 0]
+        self.actions[pos] = action
+        self.rewards[pos] = reward
         self.dones[pos] = done
         self.timeouts[pos] = np.array([info.get("TimeLimit.truncated", False) for info in infos])
         self.goal_changes[pos] = np.array([info.get("goal_changed", False) for info in infos]) | done
 
-        if self.is_exploring:
+        if is_exploring:
             self.explore_pos = (
                 self.buffer_size + (self.n_envs + self.explore_pos - self.buffer_size) % self.explore_buffer_size
             )
@@ -133,6 +133,7 @@ class CEMRLReplayBuffer(DictReplayBuffer):
         Returns:
             DictReplayBufferSamples: A dictionary of tensors containing the sampled transitions.
         """
+        assert self.encoder is not None
         indices = np.random.choice(self.valid_indices(), batch_size)
         encoder_context = self.get_encoder_context(indices, env)
         with th.no_grad():

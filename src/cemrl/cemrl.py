@@ -7,12 +7,14 @@ from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.noise import ActionNoise
 from stable_baselines3.common.off_policy_algorithm import OffPolicyAlgorithm
 from stable_baselines3.common.type_aliases import GymEnv, MaybeCallback, Schedule
+from src.cemrl.buffers1 import EpisodicReplayBuffer, BufferModes
 from src.cemrl.buffers import CEMRLReplayBuffer
 from src.cemrl.policies import CEMRLPolicy
 from src.cli import DummyPolicy
+from src.core.state_aware_algorithm import StateAwareOffPolicyAlgorithm
 
 
-class CEMRL(OffPolicyAlgorithm):
+class CEMRL(StateAwareOffPolicyAlgorithm):
     """CEMRL algorithm."""
 
     def __init__(
@@ -29,7 +31,7 @@ class CEMRL(OffPolicyAlgorithm):
         encoder_grad_steps: int = 40,
         policy_grad_steps: int = 10,
         action_noise: Optional[ActionNoise] = None,
-        replay_buffer_class: Optional[Type[CEMRLReplayBuffer]] = None,
+        replay_buffer_class: Optional[Type[EpisodicReplayBuffer]] = None,
         replay_buffer_kwargs: Optional[Dict[str, Any]] = None,
         optimize_memory_usage: bool = False,
         stats_window_size: int = 100,
@@ -50,7 +52,7 @@ class CEMRL(OffPolicyAlgorithm):
             train_freq=train_freq,
             gradient_steps=1,
             action_noise=action_noise,
-            replay_buffer_class=replay_buffer_class or CEMRLReplayBuffer,
+            replay_buffer_class=replay_buffer_class or EpisodicReplayBuffer,
             replay_buffer_kwargs=replay_buffer_kwargs,
             optimize_memory_usage=optimize_memory_usage,
             stats_window_size=stats_window_size,
@@ -63,16 +65,17 @@ class CEMRL(OffPolicyAlgorithm):
             sde_support=False,
         )
 
-        self.encoder_window = encoder_window
         self.decoder_samples = decoder_samples
         self.encoder_grad_steps = encoder_grad_steps
         self.policy_grad_steps = policy_grad_steps
 
+        self.policy_kwargs["encoder_window"] = encoder_window
         self.replay_buffer_kwargs["encoder"] = policy.encoder
         if _init_setup_model:
             self._setup_model()
         self.policy: CEMRLPolicy = policy.to(self.device)
         self.policy.sub_policy_algorithm.replay_buffer = self.replay_buffer
+        self.replay_buffer: EpisodicReplayBuffer
 
     def _setup_learn(
         self,
@@ -86,7 +89,6 @@ class CEMRL(OffPolicyAlgorithm):
         self.policy.sub_policy_algorithm.replay_buffer = self.replay_buffer
         self.policy.sub_policy_algorithm.set_logger(self.logger)
 
-        # self.scaler = th.cuda.amp.GradScaler()
         return result
 
     def train(self, gradient_steps: int, batch_size: int) -> None:
@@ -100,8 +102,10 @@ class CEMRL(OffPolicyAlgorithm):
             gradient_steps (int): How often the training should be applied
             batch_size (int): Batch size used in the training
         """
+        self.replay_buffer.mode = BufferModes.CEMRL
         for j in range(self.encoder_grad_steps):
             self.reconstruction_training_step(batch_size)
+        self.replay_buffer.mode = BufferModes.Policy
         self.policy.sub_policy_algorithm.train(self.policy_grad_steps, batch_size)
 
     def reconstruction_training_step(self, batch_size: int):
@@ -118,71 +122,70 @@ class CEMRL(OffPolicyAlgorithm):
         assert isinstance(self.replay_buffer, CEMRLReplayBuffer)
 
         self.policy.set_training_mode(True)
-        batch_inds = np.random.choice(self.replay_buffer.valid_indices(), size=batch_size)
-
-        encoder_input = self.replay_buffer.get_encoder_context(batch_inds, self._vec_normalize_env, self.encoder_window)
+        
+        encoder_input, decoder_input = self.replay_buffer.sample(batch_size, self._vec_normalize_env)
+        encoder_input = self.replay_buffer.get_encoder_context(batch_inds, self._vec_normalize_env, self.policy.encoder_window)
         batch_size = len(encoder_input.actions)
 
         dec_samples = self.replay_buffer.get_decoder_targets(batch_inds, self._vec_normalize_env, self.decoder_samples)
         dec_observations = dec_samples.observations
         dec_next_observations = dec_samples.next_observations
 
-        with th.autocast("cuda"):
-            y_distribution, z_distributions = self.policy.encoder.encode(
-                encoder_input.observations,
-                encoder_input.actions,
-                encoder_input.rewards,
-                encoder_input.next_observations,
+        y_distribution, z_distributions = self.policy.encoder.encode(
+            encoder_input.observations,
+            encoder_input.actions,
+            encoder_input.rewards,
+            encoder_input.next_observations,
+        )
+
+        kl_qz_pz = th.zeros(batch_size, self.policy.num_classes, device=self.device)
+        state_losses = th.zeros(batch_size, self.policy.num_classes, device=self.device)
+        state_vars = 0.0
+        reward_vars = 0.0
+        reward_losses = th.zeros(batch_size, self.policy.num_classes, device=self.device)
+        nll_px = th.zeros(batch_size, self.policy.num_classes, device=self.device)
+
+        # every y component (see ELBO formula)
+        for y in range(self.policy.num_classes):
+            _, z = self.policy.encoder.sample(y_distribution, z_distributions, y=y)
+            z = z.unsqueeze(1).repeat(1, dec_observations.shape[1], 1)
+            # put in decoder to get likelihood
+            state_estimate, reward_estimate = self.policy.decoder(
+                dec_observations, dec_samples.actions, dec_next_observations, z, return_raw=True
             )
 
-            kl_qz_pz = th.zeros(batch_size, self.policy.num_classes, device=self.device)
-            state_losses = th.zeros(batch_size, self.policy.num_classes, device=self.device)
-            state_vars = 0.0
-            reward_vars = 0.0
-            reward_losses = th.zeros(batch_size, self.policy.num_classes, device=self.device)
-            nll_px = th.zeros(batch_size, self.policy.num_classes, device=self.device)
+            # state_vars += th.var(state_estimate, dim=0).sum().item()
+            # reward_vars += th.var(reward_estimate, dim=0).sum().item()
 
-            # every y component (see ELBO formula)
-            for y in range(self.policy.num_classes):
-                _, z = self.policy.encoder.sample(y_distribution, z_distributions, y=y)
-                z = z.unsqueeze(1).repeat(1, dec_observations.shape[1], 1)
-                # put in decoder to get likelihood
-                state_estimate, reward_estimate = self.policy.decoder(
-                    dec_observations, dec_samples.actions, dec_next_observations, z, return_raw=True
-                )
+            reward_loss = th.sum((reward_estimate - dec_samples.rewards[None].expand(reward_estimate.shape)) ** 2, dim=-1)
+            reward_loss = th.mean(reward_loss, dim=-1)
+            reward_loss = th.mean(reward_loss, dim=0)
+            reward_losses[:, y] = reward_loss
 
-                # state_vars += th.var(state_estimate, dim=0).sum().item()
-                # reward_vars += th.var(reward_estimate, dim=0).sum().item()
+            state_loss = th.sum((state_estimate - dec_next_observations[None].expand(state_estimate.shape)) ** 2, dim=-1)
+            state_loss = th.mean(state_loss, dim=-1)
+            state_loss = th.mean(state_loss, dim=0)
+            state_losses[:, y] = state_loss
 
-                reward_loss = th.sum((reward_estimate - dec_samples.rewards[None].expand(reward_estimate.shape)) ** 2, dim=-1)
-                reward_loss = th.mean(reward_loss, dim=-1)
-                reward_loss = th.mean(reward_loss, dim=0)
-                reward_losses[:, y] = reward_loss
+            # p(x|z_k)
+            nll_px[:, y] = 0.3333 * state_loss + 0.6666 * reward_loss
 
-                state_loss = th.sum((state_estimate - dec_next_observations[None].expand(state_estimate.shape)) ** 2, dim=-1)
-                state_loss = th.mean(state_loss, dim=-1)
-                state_loss = th.mean(state_loss, dim=0)
-                state_losses[:, y] = state_loss
+            # KL ( q(z | x,y=k) || p(z|y=k))
+            ones = th.ones(batch_size, self.policy.latent_dim, device=self.device)
+            prior_pz = th.distributions.normal.Normal(ones * y, ones * 0.5)
+            kl_qz_pz[:, y] = th.sum(th.distributions.kl.kl_divergence(z_distributions[y], prior_pz), dim=-1)
 
-                # p(x|z_k)
-                nll_px[:, y] = 0.3333 * state_loss + 0.6666 * reward_loss
+        # KL ( q(y | x) || p(y) )
+        ones = th.ones(batch_size, self.policy.num_classes, device=self.device)
+        prior_py = th.distributions.categorical.Categorical(probs=ones * (1.0 / self.policy.num_classes))
+        kl_qy_py = th.distributions.kl.kl_divergence(y_distribution, prior_py)
 
-                # KL ( q(z | x,y=k) || p(z|y=k))
-                ones = th.ones(batch_size, self.policy.latent_dim, device=self.device)
-                prior_pz = th.distributions.normal.Normal(ones * y, ones * 0.5)
-                kl_qz_pz[:, y] = th.sum(th.distributions.kl.kl_divergence(z_distributions[y], prior_pz), dim=-1)
-
-            # KL ( q(y | x) || p(y) )
-            ones = th.ones(batch_size, self.policy.num_classes, device=self.device)
-            prior_py = th.distributions.categorical.Categorical(probs=ones * (1.0 / self.policy.num_classes))
-            kl_qy_py = th.distributions.kl.kl_divergence(y_distribution, prior_py)
-
-            alpha_kl_z = 1e-3  # weighting factor KL loss of z distribution vs prior
-            beta_kl_y = 1e-3  # weighting factor KL loss of y distribution vs prior
-            y_dist_probs = cast(th.Tensor, y_distribution.probs)
-            elbo = th.sum(th.sum(th.mul(y_dist_probs, -nll_px - alpha_kl_z * kl_qz_pz), dim=-1) - beta_kl_y * kl_qy_py)
-            loss = -elbo
-            # loss = encoder_loss
+        alpha_kl_z = 1e-3  # weighting factor KL loss of z distribution vs prior
+        beta_kl_y = 1e-3  # weighting factor KL loss of y distribution vs prior
+        y_dist_probs = cast(th.Tensor, y_distribution.probs)
+        elbo = th.sum(th.sum(th.mul(y_dist_probs, -nll_px - alpha_kl_z * kl_qz_pz), dim=-1) - beta_kl_y * kl_qy_py)
+        loss = -elbo
+        # loss = encoder_loss
 
         self.policy.optimizer.zero_grad()
 

@@ -31,7 +31,6 @@ class Ensemble(th.nn.Module):
         """
         return len(self.ensemble)
 
-    @th.autocast("cuda")
     def forward(self, *args, return_raw=False, **kwargs):
         """Forward computation of the ensemble.
 
@@ -74,7 +73,6 @@ class WorldModel(th.nn.Module):
             *create_mlp(input_size + obs_dim, 1, net_arch=[int(complexity * input_size)] * 2)
         )
 
-    @th.autocast("cuda")
     def forward(self, obs: th.Tensor, action: th.Tensor, next_obs: Optional[th.Tensor] = None, z: Optional[th.Tensor] = None):
         """Compute the observation and reward prediction given an observation and action.
 

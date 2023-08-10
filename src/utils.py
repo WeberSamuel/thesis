@@ -2,6 +2,28 @@
 import numpy as np
 from gym import spaces
 from typing import Any, Callable
+import torch as th
+
+class DeviceAwareModuleMixin:
+    """
+    Mixin class that makes a module aware of the device it is on.
+    """
+
+    def __init__(self, *args, **kwargs):
+        if not isinstance(self, th.nn.Module):
+            raise ValueError("DeviceAwareModuleMixin can only be used with torch.nn.Module subclasses.")
+        super().__init__(*args, **kwargs)
+
+    @property
+    def device(self) -> th.device:
+        """
+        The device the module is on.
+
+        :return: The device.
+        """
+        if isinstance(self, th.nn.Module):
+            return next(self.parameters()).device
+        raise NotImplementedError()
 
 
 def apply_function_to_type(data: Any, apply_on_type: type, function: Callable) -> Any:

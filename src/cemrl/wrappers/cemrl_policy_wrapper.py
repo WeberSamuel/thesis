@@ -6,7 +6,7 @@ from stable_baselines3.common.vec_env.base_vec_env import VecEnv, VecEnvObs, Vec
 
 
 class CEMRLPolicyWrapper(ObservationWrapper):
-    def __init__(self, env: Env|VecEnv, latent_dim: int):
+    def __init__(self, env: Env, latent_dim: int):
         super().__init__(env)
         original_obs_space = getattr(env, "original_obs_space", None)
         if original_obs_space is None:
