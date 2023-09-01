@@ -1,0 +1,4 @@
+main:
+  replay_buffer: src.cemrl.buffers.NoLinkingCemrlReplayBuffer
+learn:
+  tb_log_name: no-linking

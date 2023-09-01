@@ -1,9 +1,0 @@
-callback:
-  exploration_callback:
-    init_args:
-      exploration_algorithm:
-        class_path: src.plan2explore.plan2explore.Plan2Explore
-        init_args:
-          policy: src.plan2explore.policies.CEMRLMPCExplorationPolicy
-learn:
-  tb_log_name: default-mpc

@@ -1,0 +1,10 @@
+main:
+  algorithm:
+    init_args:
+      tensorboard_log: "logs/half-cheetah/cemrl"
+  policy:
+    init_args:
+      latent_dim: 1
+      net_complexity: 10.0
+learn:
+  total_timesteps: 1_000_000

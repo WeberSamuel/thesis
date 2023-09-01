@@ -14,22 +14,21 @@ class HalfCheetahMetaClasses(Enum):
 
 
 class HalfCheetahEnv(MetaMixin, GymHalfCheetahEnv):
-    def __init__(self, goal_sampler: BaseSampler, *args, width: int = 256, height: int = 256, **kwargs) -> None:
-        super().__init__(goal_sampler, width=width, height=height, *args, **kwargs)
-        if self._exclude_current_positions_from_observation:
-            self.observation_space = Box(low=-np.inf, high=np.inf, shape=(17,), dtype=np.float32)
-        else:
-            self.observation_space = Box(low=-np.inf, high=np.inf, shape=(18,), dtype=np.float32)
+    def __init__(self, goal_sampler: BaseSampler, *args, width: int = 256, height: int = 256, success_threshold:float = 2, **kwargs) -> None:
+        super().__init__(goal_sampler, width=width, height=height, exclude_current_positions_from_observation=False, *args, **kwargs)
+        self.success_threshold = success_threshold
+        self.observation_space = Box(low=-np.inf, high=np.inf, shape=self.observation_space.shape, dtype=np.float32) # type: ignore
 
     def step(self, action):
         obs, reward, terminated, truncated, info = super().step(action)
+        self.add_meta_info(info)
         if self.task == HalfCheetahMetaClasses.VELOCITY.value:
             reward = np.abs(info["x_velocity"] - self.goal) + info["reward_ctrl"]
         elif self.task == HalfCheetahMetaClasses.DIRECTION.value:
             reward = (np.sign(info["x_velocity"]) == np.sign(self.goal)) + info["reward_ctrl"]
         elif self.task == HalfCheetahMetaClasses.GOAL.value:
             reward = -np.abs(info["x_position"] - self.goal) + info["reward_ctrl"]
-        self.add_meta_info(info)
+            info["is_success"] = np.linalg.norm(info["x_position"] - self.goal) < 2
         self.last_info = info
         return obs, reward, terminated, truncated, info
 

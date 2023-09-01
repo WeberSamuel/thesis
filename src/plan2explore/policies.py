@@ -1,16 +1,18 @@
 """Policies for the Plan2Explore Algorithm."""
-from typing import Dict, Optional, Tuple, Union
+from typing import Dict, Optional, Tuple
 import numpy as np
 import torch as th
-from stable_baselines3.common.policies import BasePolicy
-from stable_baselines3.common.vec_env import VecEnv
-from gymnasium import Env, spaces
+from gymnasium import spaces
+import torch
+from src.core.state_aware_algorithm import StateAwarePolicy
 from src.cemrl.networks import Encoder
 from src.plan2explore.networks import Ensemble
+from src.utils import apply_function_to_type
 from stable_baselines3.common.type_aliases import Schedule
 
 
-class Plan2ExplorePolicy(BasePolicy):
+
+class Plan2ExplorePolicy(StateAwarePolicy):
     """Base Policy of the Plan2Explore Algorithm.
 
     It uses an ensemble of world models to steer the agent into undiscovered areas at training time.
@@ -100,11 +102,24 @@ class CEMRLExplorationPolicy(Plan2ExplorePolicy):
         self.encoder = encoder
         self.optimizer = self.optimizer_class(self.parameters(), **self.optimizer_kwargs)
 
-    def _predict(self, observation: Dict[str, th.Tensor], deterministic: bool = False) -> th.Tensor:  # type: ignore
+    def _predict(self, new_observation: Dict[str, th.Tensor], deterministic: bool = False) -> th.Tensor:  # type: ignore
+        observation = self.state # type: ignore
+        for k, v in observation.items():  # type:ignore
+            v: th.Tensor
+            v[:, :-1] = v[:, 1:].clone()
+            v[:, -1] = new_observation[k]
+
         with th.no_grad():
             _, z = self.encoder(observation)
-        obs = observation["observation"][:, -1]  # strip history
-        return super()._predict(obs, deterministic, z=z)
+        return super()._predict(new_observation["observation"], deterministic, z=z)
+    
+    def _reset_states(self, size: int) -> dict[str, th.Tensor | np.ndarray] | Tuple[np.ndarray | th.Tensor, ...]:
+        return apply_function_to_type(
+            self.observation_space.sample(),
+            np.ndarray,
+            lambda x: th.zeros((size, 30, *x.shape), device=self.device),
+        )
+
 
 
 class Plan2ExploreMPCPolicy(Plan2ExplorePolicy):

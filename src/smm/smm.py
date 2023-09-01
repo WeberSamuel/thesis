@@ -9,6 +9,7 @@ from stable_baselines3.common.noise import ActionNoise
 from stable_baselines3.common.type_aliases import GymEnv, MaybeCallback, Schedule
 from stable_baselines3.common.buffers import DictReplayBuffer
 
+from src.cemrl.buffers import CEMRLReplayBuffer
 from src.core.state_aware_algorithm import StateAwareOffPolicyAlgorithm, StateStorage
 from src.smm.policies import SMMPolicy, SMMAgent
 from stable_baselines3.common.vec_env import VecEnvWrapper
@@ -21,10 +22,10 @@ class SMM(StateAwareOffPolicyAlgorithm):
         env: GymEnv,
         learning_rate: float | Schedule = 1e-3,
         batch_size: int = 256,
-        buffer_size: int = 1000000,
+        buffer_size: int = 1_000_000,
         device: th.device | str = "auto",
         gamma: float = 0.99,
-        learning_starts: int = 100_000,
+        learning_starts: int = 1000,
         log_prefix: str = "smm",
         monitor_wrapper: bool = True,
         optimize_memory_usage: bool = False,
@@ -88,8 +89,8 @@ class SMM(StateAwareOffPolicyAlgorithm):
             raise ValueError("The replay buffer is not initialized.")
         for _ in range(num_batches):
             batch = self.replay_buffer.sample(batch_size, self.get_vec_normalize_env())
-            obs = batch.observations["observation"][:, -1]  # type: ignore
-            next_obs = batch.next_observations["observation"][:, -1]  # type: ignore
+            obs = batch.observations["observation"]  # type: ignore
+            next_obs = batch.next_observations["observation"]  # type: ignore
             z = batch.observations["meta"]  # type: ignore
             actions = batch.actions
             dones = batch.dones
@@ -136,9 +137,9 @@ class SMMWrapper(VecEnvWrapper):
 
 class SMMStateStorage(StateStorage):
     def _change_obs(self, obs: Dict[str, np.ndarray]):
-        obs["meta"] = self.policy_state[1]
+        obs["meta"] = self.policy_state[1] # type: ignore
 
     def _change_terminal_obs(self, terminals: list[Dict[str, np.ndarray] | None]):
         for i, terminal in enumerate(terminals):
             if terminal is not None:
-                terminal["meta"] = self.policy_state[1][i]
+                terminal["meta"] = self.policy_state[1][i] # type: ignore

@@ -1,0 +1,18 @@
+callback:
+  eval_exploration_callback:
+    class_path: src.callbacks.Plan2ExploreEvalCallback
+    init_args:
+      log_path: p2e-eval
+      eval_freq: 20
+  exploration_callback:
+    class_path: src.callbacks.ExplorationCallback
+    init_args:
+      steps_per_rollout: 512
+      pre_train_steps: 1024000
+      train_on_rollout: false
+exploration:
+  algorithm: src.plan2explore.plan2explore.Plan2Explore
+  policy: src.plan2explore.policies.CEMRLExplorationPolicy
+  replay_buffer: src.cemrl.buffers.CEMRLReplayBuffer
+learn:
+  tb_log_name: cemrl-p2e

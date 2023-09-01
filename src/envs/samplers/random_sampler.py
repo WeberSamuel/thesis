@@ -11,8 +11,8 @@ class RandomSampler(BaseSampler):
 
     def _get_goal_space(self):
         if self.one_sided:
-            return spaces.Box(low=0, high=self.max_goal_radius, shape=(1,))
-        return spaces.Box(low=-self.max_goal_radius, high=self.max_goal_radius, shape=(1,))
+            return spaces.Box(low=0, high=self.max_goal_radius, shape=(1,), dtype=np.float32)
+        return spaces.Box(low=-self.max_goal_radius, high=self.max_goal_radius, shape=(1,), dtype=np.float32)
 
     def sample(self, num_goals:int, available_tasks:list[int]):
         if self.one_sided:
@@ -21,4 +21,4 @@ class RandomSampler(BaseSampler):
             goals = np.random.random(num_goals) * 2 * self.max_goal_radius - self.max_goal_radius
         tasks = np.random.choice(available_tasks, num_goals)
         goals[tasks == 1] = np.sign(goals[tasks == 1])
-        return goals, tasks
+        return goals.astype(np.float32), tasks

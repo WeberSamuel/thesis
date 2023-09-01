@@ -27,4 +27,4 @@ class MetaMixin:
 
     def reset(self, *args, **kwargs):
         self.change_goal()
-        return super().reset(*args, **kwargs)  # type: ignore
+        return super().reset(*args, **kwargs) # type: ignore

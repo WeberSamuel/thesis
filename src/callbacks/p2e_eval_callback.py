@@ -7,6 +7,8 @@ from stable_baselines3.common.base_class import BaseAlgorithm
 from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.evaluation import evaluate_policy
 from stable_baselines3.common.vec_env import VecEnv, sync_envs_normalization
+from src.dreamer.policies import DreamerPolicy
+from src.dreamer.dreamer1 import DreamerPolicy as Dreamer1Policy
 
 from src.p2e.policies import P2EPolicy
 
@@ -56,7 +58,7 @@ class P2EEvalCallback(EvalInLogFolderCallback):
     such that it tries to maximize the future reward instead.
     """
     def _eval_step(self) -> bool:
-        assert self.eval_model is not None and isinstance(self.eval_model.policy, P2EPolicy)
+        assert self.eval_model is not None and isinstance(self.eval_model.policy, P2EPolicy|DreamerPolicy|Dreamer1Policy)
         self.eval_model.policy.use_intrinsic = False
         continue_training = True
 

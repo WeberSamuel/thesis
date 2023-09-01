@@ -4,7 +4,7 @@ import numpy as np
 from src.envs.meta_env import MetaMixin
 
 class CEMRLWrapper(ObservationWrapper):
-    def __init__(self, env: Env, normalize_obs_action: bool = True, disabled: bool = False):
+    def __init__(self, env: Env, normalize_obs_action: bool = True, disabled: bool = False, n_stack:int=30):
         super().__init__(env)
         self.disabled = disabled
 
@@ -41,6 +41,7 @@ class CEMRLWrapper(ObservationWrapper):
                 "action": action_obs_space,
                 "reward": spaces.Box(-np.inf, np.inf, (1,)),
                 "is_first": spaces.Box(0, 1, (1,)),
+                "is_terminal": spaces.Box(0, 1, (1,)),
             }
         )
 
@@ -48,16 +49,16 @@ class CEMRLWrapper(ObservationWrapper):
 
     def step(self, action: np.ndarray):
         obs, reward, terminated, truncated, info = self.env.step(action)
-        return self.observation(obs, action, reward, info), reward, terminated, truncated, info
+        return self.observation(obs, action, reward, terminated, info), reward, terminated, truncated, info
 
     def reset(self, **kwargs):
         obs, info = self.env.reset(**kwargs)
         info.setdefault("is_first", True)
         action = np.zeros_like(self.action_space.low)
-        obs = self.observation(obs, action, 0.0, info)
+        obs = self.observation(obs, action, 0.0, False, info)
         return obs, info
 
-    def observation(self, obs: Any, action: Any, reward: Any, info: dict[str, Any]) -> dict[str, Any]:
+    def observation(self, obs: Any, action: Any, reward: Any, terminated: Any, info: dict[str, Any]) -> dict[str, Any]:
         obs = {
             "observation": obs,
             "goal": info.get("goal", np.zeros_like(self.unwrapped.goal_sampler.goal_space.low)),
@@ -66,6 +67,7 @@ class CEMRLWrapper(ObservationWrapper):
             "action": action,
             "reward": reward,
             "is_first": info.get("is_first", False),
+            "is_terminal": terminated,
         }
 
         if self.normalize_obs_action:

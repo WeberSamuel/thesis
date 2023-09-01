@@ -1,5 +1,7 @@
 """Main entry point for running trainings and evaluations."""
 from dataclasses import dataclass
+from multiprocessing import freeze_support
+from os import path
 from pydoc import locate
 from typing import Any, Dict, Optional, Type
 
@@ -13,22 +15,29 @@ from stable_baselines3.common.policies import BasePolicy
 from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
 from stable_baselines3.common.vec_env import VecEnv, DummyVecEnv, SubprocVecEnv
 import wandb
-from src.cemrl.wrappers.cemrl_wrapper import CEMRLWrapper
+from src.cemrl.wrappers.cemrl_wrapper_1 import CEMRLWrapper
 from src.envs.meta_env import MetaMixin
 from src.envs.wrappers.heatmap import HeatmapWrapper
 from src.envs.wrappers.non_stationary import NonStationaryWrapper
 from src.envs.wrappers.success import SuccessWrapper
-import cv2
-from src.callbacks import ExplorationCallback, Plan2ExploreEvalCallback, SaveConfigCallback, SaveHeatmapCallback
-
+from src.callbacks.p2e_eval_callback import P2EEvalCallback
+from src.callbacks import (
+    ExplorationCallback,
+    Plan2ExploreEvalCallback,
+    SaveConfigCallback,
+    SaveHeatmapCallback,
+    ExplorationCallback,
+)
+from gymnasium.wrappers.time_limit import TimeLimit
+from stable_baselines3.common.utils import get_latest_run_id
 
 @dataclass
 class Callbacks:
     custom_callback: Optional[BaseCallback] = None
     eval_callback: Optional[EvalCallback] = None
     save_heatmap_callback: Optional[SaveHeatmapCallback] = None
-    eval_exploration_callback: Optional[Plan2ExploreEvalCallback] = None
-    exploration_callback: Optional[ExplorationCallback] = None
+    eval_exploration_callback: Optional[Plan2ExploreEvalCallback|P2EEvalCallback] = None
+    exploration_callback: Optional[ExplorationCallback | ExplorationCallback] = None
     save_config_callback: Optional[SaveConfigCallback] = None
     checkpoint_callback: Optional[CheckpointCallback] = None
 
@@ -47,14 +56,15 @@ def create_env(
     heatmap_class: Type[HeatmapWrapper] | None = None,
     heatmap_kwargs: Dict[str, Any] | None = None,
     n_envs: int = 1,
+    time_limit: int | None = None,
     **kwargs,
 ) -> VecEnv:
-    env_class = env_class if not isinstance(env_class, str) else locate(env_class) # type: ignore
-    vec_env_class = vec_env_class if not isinstance(vec_env_class, str) else locate(vec_env_class) # type: ignore
-    cemrl_wrapper_class = cemrl_wrapper_class if not isinstance(cemrl_wrapper_class, str) else locate(cemrl_wrapper_class) # type: ignore
-    success_class = success_class if not isinstance(success_class, str) else locate(success_class) # type: ignore
-    non_stationary_class = non_stationary_class if not isinstance(non_stationary_class, str) else locate(non_stationary_class) # type: ignore
-    heatmap_class = heatmap_class if not isinstance(heatmap_class, str) else locate(heatmap_class) # type: ignore
+    env_class = env_class if not isinstance(env_class, str) else locate(env_class)  # type: ignore
+    vec_env_class = vec_env_class if not isinstance(vec_env_class, str) else locate(vec_env_class)  # type: ignore
+    cemrl_wrapper_class = cemrl_wrapper_class if not isinstance(cemrl_wrapper_class, str) else locate(cemrl_wrapper_class)  # type: ignore
+    success_class = success_class if not isinstance(success_class, str) else locate(success_class)  # type: ignore
+    non_stationary_class = non_stationary_class if not isinstance(non_stationary_class, str) else locate(non_stationary_class)  # type: ignore
+    heatmap_class = heatmap_class if not isinstance(heatmap_class, str) else locate(heatmap_class)  # type: ignore
     vec_env_kwargs = vec_env_kwargs if vec_env_kwargs is not None else {}
     cemrl_wrapper_kwargs = cemrl_wrapper_kwargs if cemrl_wrapper_kwargs is not None else {}
     success_kwargs = success_kwargs if success_kwargs is not None else {}
@@ -74,6 +84,8 @@ def create_env(
             env = heatmap_class(env, **heatmap_kwargs)
         if cemrl_wrapper_class is not None:
             env = cemrl_wrapper_class(env, **cemrl_wrapper_kwargs)
+        if time_limit is not None:
+            env = TimeLimit(env, max_episode_steps=time_limit)
         return env
 
     goal_sampler = getattr(kwargs["env"], "goal_sampler", None)
@@ -98,7 +110,7 @@ def add_env(parser: ArgumentParser, key: str):
 
     parser.add_subclass_arguments(VecEnv, key + ".vec_env", skip=set(["env_fns"]), instantiate=False)
     parser.link_arguments(key + ".vec_env.class_path", key + ".vec_env_class")
-    parser.link_arguments(key + ".vec_env_kwargs.init_args", key + ".vec_env_kwargs", compute_fn=lambda x: vars(x))
+    parser.link_arguments(key + ".vec_env.init_args", key + ".vec_env_kwargs", compute_fn=lambda x: vars(x))
 
     parser.add_subclass_arguments(CEMRLWrapper, key + ".cemrl_wrapper", skip=set(["env"]), instantiate=False)
     parser.link_arguments(key + ".cemrl_wrapper.class_path", key + ".cemrl_wrapper_class")
@@ -184,6 +196,7 @@ def add_base_algorithm(
 
 
 if __name__ == "__main__":
+    freeze_support()
     parser = ArgumentParser(parser_mode="omegaconf")
     parser.add_argument("--config", action=ActionConfigFile, help="Path to a configuration file in json or yaml format.")
     parser.add_method_arguments(BaseAlgorithm, "learn", "learn")
@@ -239,76 +252,78 @@ if __name__ == "__main__":
     parser.link_arguments("envs.env", "main.policy.init_args.env", apply_on="instantiate")
     parser.link_arguments("envs.env.cemrl_wrapper.init_args.n_stack", "main.algorithm.init_args.encoder_window")
     parser.link_arguments("envs.env", "exploration.algorithm.init_args.env", apply_on="instantiate")
+    parser.link_arguments("envs.env.time_limit", "main.replay_buffer.init_args.max_episode_length")
 
     add_env(parser, "envs.exploration_env")
-    parser.link_arguments(
-        "envs.exploration_env",
-        "exploration.algorithm.init_args.env",
-        apply_on="instantiate",
-    )
-    parser.link_arguments(
-        "envs.exploration_env",
-        "exploration.policy.init_args.env",
-        apply_on="instantiate",
-    )
+    parser.link_arguments("envs.exploration_env", "exploration.algorithm.init_args.env", apply_on="instantiate")
+    parser.link_arguments("envs.exploration_env", "exploration.policy.init_args.env", apply_on="instantiate")
+    parser.link_arguments("envs.exploration_env.time_limit", "exploration.replay_buffer.init_args.max_episode_length")
 
     add_env(parser, "envs.eval_env")
-    parser.link_arguments(
-        "envs.env.cemrl_wrapper.init_args.n_stack",
-        "envs.eval_env.cemrl_wrapper.init_args.n_stack",
-    )
-    parser.link_arguments(
-        "envs.eval_env",
-        "callback.eval_callback.init_args.eval_env",
-        apply_on="instantiate",
-    )
+    parser.link_arguments("envs.env.cemrl_wrapper.init_args.n_stack", "envs.eval_env.cemrl_wrapper.init_args.n_stack")
+    parser.link_arguments("envs.eval_env", "callback.eval_callback.init_args.eval_env", apply_on="instantiate")
 
     add_env(parser, "envs.exploration_eval_env")
     parser.link_arguments(
-        "envs.env.cemrl_wrapper.init_args.n_stack",
-        "envs.exploration_eval_env.cemrl_wrapper.init_args.n_stack",
+        "envs.env.cemrl_wrapper.init_args.n_stack", "envs.exploration_eval_env.cemrl_wrapper.init_args.n_stack"
     )
     parser.link_arguments(
-        "envs.exploration_eval_env",
-        "callback.eval_exploration_callback.init_args.eval_env",
-        apply_on="instantiate",
+        "envs.exploration_eval_env", "callback.eval_exploration_callback.init_args.eval_env", apply_on="instantiate"
     )
 
     parser.link_arguments(
-        (
-            "envs.env",
-            "envs.exploration_env",
-            "envs.eval_env",
-            "envs.exploration_eval_env",
-        ),
+        ("envs.env", "envs.exploration_env", "envs.eval_env", "envs.exploration_eval_env"),
         "callback.save_heatmap_callback.init_args.envs",
         compute_fn=lambda train, exploration, eval, exploration_eval: locals(),
         apply_on="instantiate",
     )
 
-    parser.add_argument("subcommand", choices=["train", "eval"])
+    parser.add_argument("subcommand", choices=["train", "train-exploration", "eval"])
     parser.add_argument("--wandb", type=bool, default=True)
     cfg = parser.parse_args()
 
     use_wandb = cfg.pop("wandb")
     command = cfg.pop("subcommand")
+
+    original_cfg = cfg.clone()
+
+    # Adjust callback frequencies to specify on how often they should be called during training
+    n_envs = cfg.get("envs.env.n_envs", 1)
+    total_steps = cfg.learn.total_timesteps // n_envs
+
+    i = cfg.callback
+    if i.eval_callback is not None:
+        i.eval_callback.init_args.eval_freq = total_steps // i.eval_callback.init_args.eval_freq
+    if i.save_heatmap_callback is not None:
+        i.save_heatmap_callback.init_args.save_freq = total_steps // i.save_heatmap_callback.init_args.save_freq
+    if i.eval_exploration_callback is not None:
+        i.eval_exploration_callback.init_args.eval_freq = total_steps // i.eval_exploration_callback.init_args.eval_freq
+    if i.exploration_callback is not None:
+        i.checkpoint_callback.init_args.save_freq = total_steps // i.checkpoint_callback.init_args.save_freq
+
     if use_wandb:
-        env, *log_path_parts = cfg.main.algorithm.init_args.tensorboard_log.replace("logs/", "").split("/")
+        log_dir = cfg.main.algorithm.init_args.tensorboard_log
+        run_id = get_latest_run_id(log_dir, cfg.learn.tb_log_name) + 1
+        env, *log_path_parts = log_dir.replace("logs/", "").split("/")
         name = " ".join(log_path_parts + [cfg.learn.tb_log_name])
+        # patch tensorboard manually because multiple loggers are created (exploration / policy algorithm)
+        wandb.tensorboard.patch(root_logdir=path.join(log_dir, f"{cfg.learn.tb_log_name}_{run_id}"))
         run = wandb.init(
             project="cemrl",
             sync_tensorboard=True,
             save_code=True,
             group=f"{env} {name}",
             tags=[env, *log_path_parts],
-            config=cfg.as_dict(),
+            config=original_cfg.as_dict(),
         )
 
     init_cfg = parser.instantiate_classes(cfg)
-    init_cfg.learn.callback.callbacks.append(SaveConfigCallback(parser, cfg))
+    init_cfg.learn.callback.callbacks.append(SaveConfigCallback(parser, original_cfg))
 
     if command == "train":
         init_cfg.main.algorithm.learn(**init_cfg.learn)
+    elif command == "train-exploration":
+        init_cfg.exploration.algorithm.learn(**init_cfg.learn)
     elif command == "eval":
         raise NotImplementedError()
     elif command == "train_with_best_replay_buffer":

@@ -1,4 +1,4 @@
-from typing import Dict, Optional, Tuple, Union, cast
+from typing import Dict, List, Optional, Tuple, Union, cast
 from gymnasium import spaces
 import numpy as np
 from stable_baselines3.common.callbacks import BaseCallback
@@ -17,30 +17,43 @@ class StateAwarePolicy(BasePolicy):
         state: Tuple[np.ndarray, ...] | None = None,
         episode_start: np.ndarray | None = None,
         deterministic: bool = False,
-    ) -> Tuple[np.ndarray, Tuple[np.ndarray, ...] | None]:
+    ) -> Tuple[np.ndarray, dict[str, np.ndarray | torch.Tensor] | Tuple[np.ndarray | torch.Tensor, ...] | None]:
         n_env = len(observation) if not isinstance(observation, dict) else observation["observation"].shape[0]
         self.state = state or self.reset_states(n_env)
         action, _ = super().predict(observation, state, episode_start, deterministic)
         return action, self.state
 
     def reset_states(
-        self, n_env: int | None = None, dones: np.ndarray | None = None, state: Tuple[np.ndarray, ...] | None = None
-    ) -> Tuple[np.ndarray, ...]:
+        self,
+        n_env: int | None = None,
+        dones: np.ndarray | None = None,
+        state: dict[str, np.ndarray | torch.Tensor] | Tuple[np.ndarray | torch.Tensor, ...] | None = None,
+    ) -> dict[str, np.ndarray | torch.Tensor] | Tuple[np.ndarray | torch.Tensor, ...]:
         if dones is not None:
             if state is None:
                 raise ValueError("dones was provided but not state")
-            done_idx = np.where(dones)
+            done_idx = np.where(dones)[0]
+            if len(done_idx) == 0:
+                return state
 
-            state = cast(Tuple[np.ndarray, ...], tuple(s.clone() if isinstance(s, torch.Tensor) else s.copy() for s in state))
+            if isinstance(state, dict):
+                state = {k: v.clone() if isinstance(v, torch.Tensor) else v.copy() for k, v in state.items()}
+            else:
+                state = tuple(s.clone() if isinstance(s, torch.Tensor) else s.copy() for s in state)
             reset_states = self._reset_states(len(done_idx))
-            for i in range(len(state)):
-                state[i][done_idx] = reset_states[i]
+            if isinstance(state, dict):
+                assert isinstance(reset_states, dict)
+                for k, v in state.items():
+                    v[done_idx] = reset_states[k] # type: ignore
+            else:
+                for s, r in zip(state, reset_states):
+                    s[done_idx] = r # type: ignore
             return state
         if n_env is None:
             raise ValueError("n_env was not provided")
         return self._reset_states(n_env)
 
-    def _reset_states(self, size: int) -> Tuple[np.ndarray, ...]:
+    def _reset_states(self, size: int) -> dict[str, torch.Tensor | np.ndarray] | Tuple[np.ndarray | torch.Tensor, ...]:
         raise NotImplementedError()
 
 
@@ -114,6 +127,14 @@ class StateAwareOffPolicyAlgorithm(OffPolicyAlgorithm):
         callback = CallbackList([self.state_storage, callback])
         callback.init_callback(self)
         return total_timesteps, callback
+    
+    def _excluded_save_params(self) -> List[str]:
+        return super()._excluded_save_params() + ["state_storage"]
+    
+    def _get_torch_save_params(self) -> Tuple[List[str], List[str]]:
+        state_dicts, tensors = super()._get_torch_save_params()
+        tensors += ["state_storage.policy_state"]
+        return state_dicts, tensors
 
 
 class StateStorage(BaseCallback):

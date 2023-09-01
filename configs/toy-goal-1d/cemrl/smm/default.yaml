@@ -1,0 +1,10 @@
+exploration:
+  algorithm:
+    init_args:
+      learning_starts: 40_000
+      z_dim: 12
+callback:
+  exploration_callback:
+    init_args:
+      steps_per_rollout: 512
+      pre_train_steps: 45_000

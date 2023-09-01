@@ -179,7 +179,7 @@ class SMMPolicy(StateAwarePolicy):
         super().__init__(observation_space=observation_space, action_space=action_space)
         self.z_dim = z_dim
         if isinstance(observation_space, spaces.Dict):
-            obs_shape = observation_space["observation"].shape[1:]  # type: ignore
+            obs_shape = observation_space["observation"].shape  # type: ignore
         else:
             obs_shape = observation_space.shape
 
@@ -195,7 +195,7 @@ class SMMPolicy(StateAwarePolicy):
         model_idx, z = self.state
 
         if isinstance(observation, dict):
-            observation = observation["observation"][:, -1]  # type: ignore
+            observation = observation["observation"]  # type: ignore
 
         unique, inverse = np.unique(model_idx, return_inverse=True)
         action = th.zeros((len(observation), self.action_space.shape[0]), device=self.device)

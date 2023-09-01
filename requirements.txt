@@ -1,0 +1,16 @@
+--extra-index-url https://download.pytorch.org/whl/cu118
+torch 
+torchvision 
+torchaudio 
+tensorboard
+wandb
+tqdm
+rich
+scipy
+opencv-python
+matplotlib
+scipy
+stable-baselines3
+gymnasium[mujoco]
+jsonargparse[signatures,omegaconf]
+gitpython

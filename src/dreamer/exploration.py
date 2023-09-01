@@ -120,7 +120,7 @@ class Plan2Explore(nn.Module):
 
         self._model_opt = tools.Optimizer(
             name="explorer",
-            parameters=self.parameters,
+            parameters=self._networks.parameters,
             lr=model_lr,
             eps=optimizer_eps,
             grad_clip=grad_clip,

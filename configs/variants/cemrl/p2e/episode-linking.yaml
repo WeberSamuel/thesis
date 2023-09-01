@@ -1,0 +1,4 @@
+main:
+  replay_buffer: src.cemrl.buffers.EpisodeLinkingCemrlReplayBuffer
+learn:
+  tb_log_name: episode-linking

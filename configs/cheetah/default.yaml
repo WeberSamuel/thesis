@@ -1,0 +1,52 @@
+envs:
+  env:
+    n_envs: 16
+    time_limit: 200
+    vec_env: stable_baselines3.common.vec_env.DummyVecEnv
+    cemrl_wrapper:
+      class_path: src.cemrl.wrappers.CEMRLWrapper
+      init_args:
+        n_stack: 30
+    heatmap: 
+      class_path: src.envs.wrappers.heatmap.HeatmapWrapper
+      init_args:
+        idxs_2d: []
+    success: src.envs.wrappers.success.PercentageSuccessWrapper
+    non_stationary:
+      class_path: src.envs.wrappers.non_stationary.NonStationaryWrapper
+      init_args:
+        change_after_timestep: 100
+    env:
+      class_path: src.envs.half_cheetah_env.HalfCheetahEnv
+      init_args:
+        render_mode: rgb_array
+        goal_sampler: 
+          class_path: src.envs.samplers.RandomSampler
+          init_args:
+            available_tasks: [2]
+            max_goal_radius: 15.0
+  eval_env:
+    n_envs: 16
+    time_limit: 300
+    vec_env: stable_baselines3.common.vec_env.DummyVecEnv
+    cemrl_wrapper: src.cemrl.wrappers.CEMRLWrapper
+    heatmap:
+      class_path: src.envs.wrappers.heatmap.HeatmapWrapper
+      init_args:
+        idxs_2d: []
+    success: src.envs.wrappers.success.PercentageSuccessWrapper
+    non_stationary:
+      class_path: src.envs.wrappers.non_stationary.NonStationaryWrapper
+      init_args:
+        change_after_timestep: 150
+    env:
+      class_path: src.envs.half_cheetah_env.HalfCheetahEnv
+      init_args:
+        render_mode: rgb_array
+        goal_sampler: 
+          class_path: src.envs.samplers.LinspaceSampler
+          init_args:
+            available_tasks: [2]
+            max_goal_radius: 15.0
+  exploration_env: ${envs.env}
+  exploration_eval_env: ${envs.eval_env}

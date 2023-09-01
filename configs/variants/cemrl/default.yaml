@@ -1,26 +1,6 @@
-callback:
-  save_heatmap_callback:
-    class_path: src.callbacks.SaveHeatmapCallback
-    init_args:
-      save_freq: 100
-  eval_callback:
-    class_path: src.callbacks.EvalInLogFolderCallback
-    init_args:
-      log_path: eval
-      eval_freq: 100
-      n_eval_episodes: 36
-      callback_on_new_best:
-        class_path: src.callbacks.RecordVideo
-        init_args:
-          save_path: eval
-  checkpoint_callback:
-    class_path: src.callbacks.CheckpointInLogFolderCallback
-    init_args:
-      save_freq: 100
-      save_path: checkpoints
 main:
   algorithm: src.cemrl.cemrl.CEMRL
-  replay_buffer: src.cemrl.buffers.CEMRLReplayBuffer
+  replay_buffer: src.cemrl.buffers.EpisodeLinkingCemrlReplayBuffer
   policy: src.cemrl.policies.CEMRLPolicy
   optimizer:
     class_path: torch.optim.AdamW
@@ -33,6 +13,4 @@ sub_algorithm:
       learning_rate: 1e-3
   policy: stable_baselines3.sac.policies.MultiInputPolicy
 learn:
-  tb_log_name: default
-  log_interval: 1
-  progress_bar: true
+  tb_log_name: cemrl

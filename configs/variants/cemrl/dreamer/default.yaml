@@ -1,0 +1,17 @@
+callback:
+  eval_exploration_callback:
+    class_path: src.callbacks.P2EEvalCallback
+    init_args:
+      log_path: p2e-eval
+      eval_freq: 20
+  exploration_callback:
+    class_path: src.callbacks.ExplorationCallback
+    init_args:
+      steps_per_rollout: 20
+      pre_train_steps: 2_000
+      train_on_rollout: true
+exploration:
+  algorithm: src.dreamer.dreamer1.Dreamer
+  policy: src.dreamer.dreamer1.DreamerPolicy
+learn:
+  tb_log_name: cemrl-dreamer

@@ -35,7 +35,7 @@ class DecoderConfig:
 class Config:
     device = "cuda=0"
     compile = True
-    precision = 32
+    precision = 16
 
     # Environment
     reward_EMA = True
@@ -123,11 +123,11 @@ class Config:
     expl_intr_scale = 1.0
     disag_target = "stoch"
     disag_log = True
-    disag_models = 10
+    disag_models = 5
     disag_offset = 1
-    disag_layers = 4
-    disag_units = 400
-    disag_action_cond = False
+    disag_layers = 3
+    disag_units = 200
+    disag_action_cond = True
 
 
 class DMCProPrioConfig(Config):

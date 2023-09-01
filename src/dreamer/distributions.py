@@ -75,6 +75,7 @@ class DiscDist(th.distributions.Distribution):
         transfwd: Callable[[th.Tensor], th.Tensor] = symlog,
         transbwd: Callable[[th.Tensor], th.Tensor] = symexp,
     ):
+        super().__init__(validate_args=False)
         self.logits = logits
         self.probs = th.softmax(logits, -1)
         self.buckets = th.linspace(low, high, steps=255).to(logits.device)
@@ -148,6 +149,7 @@ class MSEDist(torchd.Distribution):
 
 class SymlogDist(th.distributions.Distribution):
     def __init__(self, mode: th.Tensor, dist: str = "mse", agg: str = "sum", tol: float = 1e-8):
+        super().__init__(validate_args=False)
         self._mode = mode
         self._dist = dist
         self._agg = agg
@@ -182,7 +184,7 @@ class SymlogDist(th.distributions.Distribution):
 
 class ContDist(th.distributions.Distribution):
     def __init__(self, dist: th.distributions.Distribution):
-        super().__init__()
+        super().__init__(validate_args=False)
         self._dist = dist
 
     @property
@@ -208,7 +210,7 @@ class ContDist(th.distributions.Distribution):
 
 class Bernoulli(th.distributions.Distribution):
     def __init__(self, dist: th.distributions.Independent):
-        super().__init__()
+        super().__init__(validate_args=False)
         self._dist = dist
 
     @property

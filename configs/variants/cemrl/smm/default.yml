@@ -1,0 +1,13 @@
+callback:
+  exploration_callback:
+    class_path: src.callbacks.ExplorationCallback
+    init_args:
+      steps_per_rollout: 400
+      pre_train_steps: 200_000
+      train_on_rollout: true
+      use_model_buffer: false
+exploration:
+  algorithm: src.smm.smm.SMM
+  policy: src.smm.policies.SMMPolicy
+learn:
+  tb_log_name: cemrl-smm

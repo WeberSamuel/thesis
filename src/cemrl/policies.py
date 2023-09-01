@@ -76,8 +76,8 @@ class CEMRLPolicy(StateAwarePolicy):
         observation:CEMRLObsTensorDict = self.state # type: ignore
         for k, v in observation.items():  # type:ignore
             v: th.Tensor
-            v[:-1] = v[1:]
-            v[-1] = new_observation[k]
+            v[:, :-1] = v[:, 1:].clone()
+            v[:, -1] = new_observation[k]
 
         with th.no_grad():
             y, z = self.encoder(observation)

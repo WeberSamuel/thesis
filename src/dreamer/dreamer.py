@@ -1,4 +1,4 @@
-from typing import Callable, cast
+from typing import Callable, Optional, Type, cast
 
 import numpy as np
 import torch as th
@@ -6,11 +6,13 @@ from stable_baselines3.common.utils import polyak_update
 from stable_baselines3.common.type_aliases import DictReplayBufferSamples
 
 
+from src.envs.samplers.base_sampler import BaseSampler
+from src.cemrl.buffers import CEMRLReplayBuffer
+from src.cemrl.buffers1 import EpisodicReplayBuffer
 from src.core.state_aware_algorithm import StateAwareOffPolicyAlgorithm
 from src.dreamer import tools
-from src.dreamer.config import Config
 from src.dreamer.exploration import Plan2Explore
-from src.dreamer.models import DreamReplayBufferSamples, ImagitiveBehavior
+from src.dreamer.models import ImagitiveBehavior
 from src.dreamer.networks import Context, State
 from src.dreamer.policies import DreamerPolicy
 from src.dreamer.tools import to_np
@@ -20,16 +22,22 @@ class Dreamer(StateAwareOffPolicyAlgorithm):
     def __init__(
         self,
         *args,
-        use_amp=True,
+        replay_buffer_class: Optional[Type[CEMRLReplayBuffer]] = CEMRLReplayBuffer,
+        buffer_size=1_000_000,
+        batch_size=16,
+        learning_rate = 1e-3,
+        learning_starts = 1000,
+        use_amp=False,
         **kwargs,
     ):
-        super().__init__(*args, **kwargs, support_multi_env=True, sde_support=False)
+        super().__init__(*args, batch_size=batch_size, buffer_size=buffer_size, learning_starts=learning_starts, replay_buffer_class=replay_buffer_class, learning_rate=learning_rate, **kwargs, support_multi_env=True, sde_support=False)
         self.policy: DreamerPolicy
 
         self._update_count = 0
         self._use_amp = use_amp
 
         self._setup_model()
+        self.replay_buffer: CEMRLReplayBuffer
 
     def train(self, gradient_steps: int, batch_size: int) -> None:
         """
@@ -45,7 +53,11 @@ class Dreamer(StateAwareOffPolicyAlgorithm):
         assert self.replay_buffer is not None
         metrics = {}
         for step in range(gradient_steps):
-            data = self.replay_buffer.sample(batch_size, env=self.get_vec_normalize_env())
+            data = self.replay_buffer.dreamer_sample(batch_size, env=self.get_vec_normalize_env(), max_length=64)
+            goal_sampler: BaseSampler = self.env.get_attr("goal_sampler", 0)[0] # type: ignore
+            data.observations["goal"] = th.tensor(goal_sampler.goals, device=self.device)[data.observations["goal_idx"]]
+            data.next_observations["goal"] = th.tensor(goal_sampler.goals, device=self.device)[data.next_observations["goal_idx"]]
+
             post, context, mets = self.train_world_model(data)
             metrics.update(mets)
             start = post
@@ -64,7 +76,7 @@ class Dreamer(StateAwareOffPolicyAlgorithm):
         self.logger.record("update_count", self._update_count)
         self.logger.dump(self.num_timesteps)
 
-    def train_exploration(self, start: State, context: Context, data: DreamReplayBufferSamples):
+    def train_exploration(self, start: State, context: Context, data: DictReplayBufferSamples):
         """
         Trains the exploration behavior of the Dreamer agent using the given start state, context, and data.
 
@@ -78,7 +90,7 @@ class Dreamer(StateAwareOffPolicyAlgorithm):
         """
         metrics = {}
         if isinstance(self.policy.expl_behavior, Plan2Explore):
-            with tools.RequiresGrad(self.policy.expl_behavior):
+            with tools.RequiresGrad(self.policy.expl_behavior._networks):
                 metrics = {}
                 stoch = start["stoch"]
                 if self.policy.dynamics_discrete:
@@ -103,8 +115,8 @@ class Dreamer(StateAwareOffPolicyAlgorithm):
                     preds = [head(inputs) for head in self.policy.expl_behavior._networks]
                     likes = th.cat([th.mean(pred.log_prob(target))[None] for pred in preds], 0)
                     loss = -th.mean(likes)
-                    metrics.update(self.policy.expl_behavior._model_opt(loss, self.policy.expl_behavior.parameters()))
-                metrics.update(self.train_behaivor(self.policy.expl_behavior.behavior, start, self._intrinsic_reward)[-1])
+                    metrics.update(self.policy.expl_behavior._model_opt(loss, self.policy.expl_behavior._networks.parameters()))
+            metrics.update(self.train_behaivor(self.policy.expl_behavior.behavior, start, self._intrinsic_reward)[-1])
         return metrics
 
     def train_world_model(self, data: DictReplayBufferSamples):
@@ -256,7 +268,6 @@ if __name__ == "__main__":
     from src.envs.samplers import RandomBoxSampler
     from src.dreamer.policies import DreamerPolicy
     from src.cemrl.wrappers.cemrl_wrapper_1 import CEMRLWrapper
-    from src.cemrl.buffers1 import EpisodicReplayBuffer, BufferModes
     from gymnasium.wrappers.time_limit import TimeLimit
     from stable_baselines3.common.vec_env import DummyVecEnv
 
@@ -264,11 +275,11 @@ if __name__ == "__main__":
         env=DummyVecEnv([lambda: CEMRLWrapper(TimeLimit(ToyGoalEnv(RandomBoxSampler(num_goals=1)), 200))] * 512),
         policy=DreamerPolicy,
         replay_buffer_class=EpisodicReplayBuffer,
-        replay_buffer_kwargs=dict(max_episode_length=200, storage_path="tmp/buffer", mode=BufferModes.Episode),
+        replay_buffer_kwargs=dict(max_episode_length=200, storage_path=None),
         learning_rate=1e3,
         learning_starts=200 * 512,
         batch_size=5,
         verbose=1,
-        tensorboard_log="tmp/tensorboard",   
+        tensorboard_log="tmp/tensorboard",
     )
     dreamer.learn(200 * 512 * 5, progress_bar=True, log_interval=1)

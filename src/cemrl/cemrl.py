@@ -7,7 +7,7 @@ from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.noise import ActionNoise
 from stable_baselines3.common.off_policy_algorithm import OffPolicyAlgorithm
 from stable_baselines3.common.type_aliases import GymEnv, MaybeCallback, Schedule
-from src.cemrl.buffers1 import EpisodicReplayBuffer, BufferModes
+from src.cemrl.buffers1 import EpisodicReplayBuffer
 from src.cemrl.buffers import CEMRLReplayBuffer
 from src.cemrl.policies import CEMRLPolicy
 from src.cli import DummyPolicy
@@ -21,17 +21,16 @@ class CEMRL(StateAwareOffPolicyAlgorithm):
         self,
         policy: CEMRLPolicy,
         env: Union[GymEnv, str],
-        encoder_window: int = 30,
         decoder_samples: int = 400,
         learning_rate: Union[float, Schedule] = 1e-3,
-        buffer_size: int = 1_000_000,
-        learning_starts: int = 100,
+        buffer_size: int = 1_000_000, # 20000,
+        learning_starts: int = 1000,
         batch_size: int = 256,
         train_freq: Union[int, Tuple[int, str]] = (1, "step"),
         encoder_grad_steps: int = 40,
         policy_grad_steps: int = 10,
         action_noise: Optional[ActionNoise] = None,
-        replay_buffer_class: Optional[Type[EpisodicReplayBuffer]] = None,
+        replay_buffer_class: Optional[Type[EpisodicReplayBuffer|CEMRLReplayBuffer]] = None,
         replay_buffer_kwargs: Optional[Dict[str, Any]] = None,
         optimize_memory_usage: bool = False,
         stats_window_size: int = 100,
@@ -64,18 +63,16 @@ class CEMRL(StateAwareOffPolicyAlgorithm):
             support_multi_env=True,
             sde_support=False,
         )
-
         self.decoder_samples = decoder_samples
         self.encoder_grad_steps = encoder_grad_steps
         self.policy_grad_steps = policy_grad_steps
 
-        self.policy_kwargs["encoder_window"] = encoder_window
         self.replay_buffer_kwargs["encoder"] = policy.encoder
         if _init_setup_model:
             self._setup_model()
         self.policy: CEMRLPolicy = policy.to(self.device)
         self.policy.sub_policy_algorithm.replay_buffer = self.replay_buffer
-        self.replay_buffer: EpisodicReplayBuffer
+        self.replay_buffer: EpisodicReplayBuffer|CEMRLReplayBuffer
 
     def _setup_learn(
         self,
@@ -102,10 +99,8 @@ class CEMRL(StateAwareOffPolicyAlgorithm):
             gradient_steps (int): How often the training should be applied
             batch_size (int): Batch size used in the training
         """
-        self.replay_buffer.mode = BufferModes.CEMRL
         for j in range(self.encoder_grad_steps):
             self.reconstruction_training_step(batch_size)
-        self.replay_buffer.mode = BufferModes.Policy
         self.policy.sub_policy_algorithm.train(self.policy_grad_steps, batch_size)
 
     def reconstruction_training_step(self, batch_size: int):
@@ -119,23 +114,20 @@ class CEMRL(StateAwareOffPolicyAlgorithm):
             batch_size (int): Size of the batches to sample from the replay buffer
         """
         assert isinstance(self.policy, CEMRLPolicy)
-        assert isinstance(self.replay_buffer, CEMRLReplayBuffer)
+        assert isinstance(self.replay_buffer, CEMRLReplayBuffer|EpisodicReplayBuffer)
 
         self.policy.set_training_mode(True)
         
-        encoder_input, decoder_input = self.replay_buffer.sample(batch_size, self._vec_normalize_env)
-        encoder_input = self.replay_buffer.get_encoder_context(batch_inds, self._vec_normalize_env, self.policy.encoder_window)
-        batch_size = len(encoder_input.actions)
-
-        dec_samples = self.replay_buffer.get_decoder_targets(batch_inds, self._vec_normalize_env, self.decoder_samples)
-        dec_observations = dec_samples.observations
-        dec_next_observations = dec_samples.next_observations
+        enc_input, dec_input = self.replay_buffer.cemrl_sample(batch_size, self._vec_normalize_env, self.policy.encoder_window, self.decoder_samples)
+        
+        dec_observations = dec_input.observations["observation"]
+        dec_next_observations = dec_input.next_observations["observation"]
 
         y_distribution, z_distributions = self.policy.encoder.encode(
-            encoder_input.observations,
-            encoder_input.actions,
-            encoder_input.rewards,
-            encoder_input.next_observations,
+            enc_input.observations["observation"],
+            enc_input.actions,
+            enc_input.rewards,
+            enc_input.next_observations["observation"],
         )
 
         kl_qz_pz = th.zeros(batch_size, self.policy.num_classes, device=self.device)
@@ -151,13 +143,13 @@ class CEMRL(StateAwareOffPolicyAlgorithm):
             z = z.unsqueeze(1).repeat(1, dec_observations.shape[1], 1)
             # put in decoder to get likelihood
             state_estimate, reward_estimate = self.policy.decoder(
-                dec_observations, dec_samples.actions, dec_next_observations, z, return_raw=True
+                dec_observations, dec_input.actions, dec_next_observations, z, return_raw=True
             )
 
             # state_vars += th.var(state_estimate, dim=0).sum().item()
             # reward_vars += th.var(reward_estimate, dim=0).sum().item()
 
-            reward_loss = th.sum((reward_estimate - dec_samples.rewards[None].expand(reward_estimate.shape)) ** 2, dim=-1)
+            reward_loss = th.sum((reward_estimate - dec_input.rewards[None].expand(reward_estimate.shape)) ** 2, dim=-1)
             reward_loss = th.mean(reward_loss, dim=-1)
             reward_loss = th.mean(reward_loss, dim=0)
             reward_losses[:, y] = reward_loss

@@ -1,0 +1,19 @@
+callback:
+  save_heatmap_callback:
+    class_path: src.callbacks.SaveHeatmapCallback
+    init_args:
+      save_freq: 20
+  eval_callback:
+    class_path: src.callbacks.EvalInLogFolderCallback
+    init_args:
+      log_path: eval
+      eval_freq: 20
+      n_eval_episodes: 36
+  checkpoint_callback:
+    class_path: src.callbacks.CheckpointInLogFolderCallback
+    init_args:
+      save_freq: 20
+      save_path: checkpoints
+learn:
+  log_interval: 1
+  progress_bar: true

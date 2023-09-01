@@ -11,6 +11,7 @@ from scipy.stats import binned_statistic_dd
 
 from src.cemrl.types import CEMRLObsTensorDict, CEMRLSacPolicyTensorInput
 
+
 class CEMRLReplayBuffer(DictReplayBuffer):
     """Replay buffer used in CEMRL."""
 
@@ -41,7 +42,8 @@ class CEMRLReplayBuffer(DictReplayBuffer):
         assert isinstance(action_space, spaces.Box)
         assert isinstance(obs_space, spaces.Box)
 
-        obs_shape = obs_space.shape[1:]  # history will be removed
+        # obs_shape = obs_space.shape[1:]  # history will be removed
+        obs_shape = obs_space.shape  # history will be removed
         self.observations = np.zeros((buffer_size, *obs_shape), obs_space.dtype)
         self.next_observations = np.zeros((buffer_size, *obs_shape), obs_space.dtype)
         self.goal_idxs = np.full(buffer_size, -1, int)
@@ -64,6 +66,24 @@ class CEMRLReplayBuffer(DictReplayBuffer):
     def explore_size(self) -> int:
         """Return the current size of the exploration data buffer."""
         return self.explore_buffer_size if self.explore_full else self.explore_pos - self.buffer_size
+
+    def cemrl_sample(
+        self, batch_size: int, env: VecNormalize | None = None, encoder_window: int = 30, decoder_samples: int = 400
+    ) -> tuple[DictReplayBufferSamples, DictReplayBufferSamples]:
+        batch_inds = np.random.choice(self.valid_indices(), batch_size)
+        encoder_input = self.get_encoder_context(batch_inds, env, encoder_window)
+        batch_size = len(encoder_input.actions)
+
+        dec_samples = self.get_decoder_targets(batch_inds, env, decoder_samples)
+
+        enc_obs = {"observation": encoder_input.observations}
+        enc_next_obs = {"observation": encoder_input.next_observations}
+        dec_obs = {"observation": dec_samples.observations}
+        dec_next_obs = {"observation": dec_samples.next_observations}
+        return (
+            encoder_input._replace(observations=enc_obs, next_observations=enc_next_obs),
+            dec_samples._replace(observations=dec_obs, next_observations=dec_next_obs),
+        )  # type:ignore
 
     def add(
         self,
@@ -95,9 +115,9 @@ class CEMRLReplayBuffer(DictReplayBuffer):
         pos = self.explore_pos if is_exploring else self.pos
         pos = np.arange(self.n_envs) + pos
 
-        self.observations[pos] = obs["observation"][:, -1]
-        self.next_observations[pos] = next_obs["observation"][:, -1]
-        self.goal_idxs[pos] = obs["goal_idx"][:, -1].squeeze(-1)
+        self.observations[pos] = obs["observation"][:]
+        self.next_observations[pos] = next_obs["observation"][:]
+        self.goal_idxs[pos] = obs["goal_idx"][:].squeeze(-1)
         self.actions[pos] = action
         self.rewards[pos] = reward
         self.dones[pos] = done
@@ -117,9 +137,56 @@ class CEMRLReplayBuffer(DictReplayBuffer):
 
     def valid_indices(self):
         """Return the indices of the valid data in the buffer."""
+        normal = np.arange(self.normal_size())
+        if self.full:
+            without = (self.pos + np.arange(self.n_envs * 30)) % self.buffer_size
+            normal = np.setdiff1d(normal, without)
+        explore = np.arange(self.buffer_size, self.buffer_size + self.explore_size())
+        if self.explore_full:
+            without = (
+                self.explore_pos - self.buffer_size + np.arange(self.n_envs * 30)
+            ) % self.explore_buffer_size + self.buffer_size
+            explore = np.setdiff1d(explore, without)
+
         return np.concatenate(
             [np.arange(self.normal_size()), np.arange(self.buffer_size, self.buffer_size + self.explore_size())]
         )
+
+    def dreamer_sample(
+        self, batch_size: int, env: VecNormalize | None = None, goals: np.ndarray | None = None, max_length: int = 64
+    ):
+        indices = np.random.choice(self.valid_indices(), batch_size)
+
+        data, indices, mask = self.get_encoder_context(indices, env, max_length, return_indices=True)  # type:ignore
+
+        goal_idx = self.to_torch(self.goal_idxs[indices], data.rewards.device)
+        goal_idx[mask] = -1
+        goal_idx = goal_idx[..., None]
+
+        starts = {}
+        for i in th.unique(mask[0]):
+            start = mask[1][mask[0] == i].max() + 1
+            if start < max_length:
+                starts[i] = start
+        is_first = th.zeros_like(goal_idx, dtype=th.bool)
+        for i, start in starts.items():
+            is_first[i, start] = True
+        is_first = is_first.float().squeeze(-1)
+
+        goals_tensor = self.to_torch(goals[self.goal_idxs[indices]])
+        goals_tensor[mask] = 0.0
+        if len(goals_tensor.shape) < 3:
+            goals_tensor = goals_tensor[..., None]
+
+        return {
+            "observation": data.observations,
+            "goal_idx": goal_idx,
+            "goal": goals_tensor,
+            "is_first": is_first,
+            "is_terminal": (data.dones * (1 - data.dones.new_tensor(self.timeouts[indices]).float())).squeeze(-1),
+            "reward": data.rewards,
+            "action": data.actions,
+        }
 
     def sample(self, batch_size: int, env: VecNormalize | None = None):
         """
@@ -156,7 +223,9 @@ class CEMRLReplayBuffer(DictReplayBuffer):
             rewards=rewards[..., None],
         )
 
-    def get_encoder_context(self, indices: np.ndarray, env: VecNormalize | None = None, encoder_window=30):
+    def get_encoder_context(
+        self, indices: np.ndarray, env: VecNormalize | None = None, encoder_window=30, return_indices: bool = False
+    ):
         """Return the context to be used for the encoder."""
         normal_samples_mask = indices < self.buffer_size
         indices = indices[:, None] - self.n_envs * np.flip(np.arange(encoder_window))[None]
@@ -187,13 +256,17 @@ class CEMRLReplayBuffer(DictReplayBuffer):
         rewards[(batch_idx, time_idx)] = 0.0
         dones[(batch_idx, time_idx)] = 0.0
 
-        return ReplayBufferSamples(
+        data = ReplayBufferSamples(
             observations=obs,  # type: ignore
             next_observations=next_obs,  # type: ignore
             actions=actions,
             dones=dones,
             rewards=rewards,
         )
+
+        if return_indices:
+            return data, indices, (batch_idx, time_idx)
+        return data
 
     def get_decoder_targets(self, base_indices: np.ndarray, env: VecNormalize | None = None, num_decoder_targets: int = 300):
         """

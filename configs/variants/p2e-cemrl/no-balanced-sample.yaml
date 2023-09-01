@@ -1,7 +1,0 @@
-main:
-  replay_buffer: 
-    class_path: src.cemrl.buffers.CEMRLReplayBuffer
-    init_args:
-      use_bin_weighted_decoder_target_sampling: false
-learn:
-  tb_log_name: no-balanced-sample

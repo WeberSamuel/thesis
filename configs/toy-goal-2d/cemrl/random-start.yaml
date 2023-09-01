@@ -1,0 +1,13 @@
+main:
+  algorithm:
+    init_args:
+      tensorboard_log: "logs/toy-goal-2d/cemrl/random-start"
+envs:
+  env:
+    init_args:
+      random_position: True
+  eval_env:
+    init_args:
+      random_position: True
+  exploration_env: ${envs.env}
+  exploration_eval_env: ${envs.eval_env}

@@ -1,0 +1,21 @@
+main:
+  algorithm:
+    init_args:
+      tensorboard_log: "logs/toy-goal-2d/cemrl/multiple-tasks"
+envs:
+  env:
+    init_args:
+      goal_sampler:
+        class_path: src.envs.samplers.random_box_sampler.RandomBoxSampler
+        init_args:
+          available_tasks: [0, 1, 2]
+  eval_env:
+    init_args:
+      env:
+        init_args:
+          goal_sampler:
+            class_path: src.envs.samplers.UniformCircleSampler
+            init_args:
+              available_tasks: [0, 1, 2]
+  exploration_env: ${envs.env}
+  exploration_eval_env: ${envs.eval_env}
