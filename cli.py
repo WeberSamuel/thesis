@@ -1,6 +1,5 @@
 """Main entry point for running trainings and evaluations."""
 from dataclasses import dataclass
-from multiprocessing import freeze_support
 from os import path
 from pydoc import locate
 from typing import Any, Dict, Optional, Type
@@ -196,7 +195,6 @@ def add_base_algorithm(
 
 
 if __name__ == "__main__":
-    freeze_support()
     parser = ArgumentParser(parser_mode="omegaconf")
     parser.add_argument("--config", action=ActionConfigFile, help="Path to a configuration file in json or yaml format.")
     parser.add_method_arguments(BaseAlgorithm, "learn", "learn")
@@ -298,8 +296,9 @@ if __name__ == "__main__":
         i.save_heatmap_callback.init_args.save_freq = total_steps // i.save_heatmap_callback.init_args.save_freq
     if i.eval_exploration_callback is not None:
         i.eval_exploration_callback.init_args.eval_freq = total_steps // i.eval_exploration_callback.init_args.eval_freq
-    if i.exploration_callback is not None:
+    if i.checkpoint_callback is not None:
         i.checkpoint_callback.init_args.save_freq = total_steps // i.checkpoint_callback.init_args.save_freq
+    
 
     if use_wandb:
         log_dir = cfg.main.algorithm.init_args.tensorboard_log

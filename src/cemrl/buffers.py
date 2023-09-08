@@ -9,7 +9,7 @@ from stable_baselines3.common.type_aliases import DictReplayBufferSamples, Repla
 from stable_baselines3.common.vec_env import VecNormalize
 from scipy.stats import binned_statistic_dd
 
-from src.cemrl.types import CEMRLObsTensorDict, CEMRLSacPolicyTensorInput
+from src.cemrl.types import CEMRLObsTensorDict, CEMRLPolicyInput
 
 
 class CEMRLReplayBuffer(DictReplayBuffer):
@@ -216,8 +216,8 @@ class CEMRLReplayBuffer(DictReplayBuffer):
         next_obs = self.to_torch(self._normalize_obs(self.next_observations[indices], env))  # type: ignore
         rewards = self.to_torch(self._normalize_reward(self.rewards[indices], env))
         return DictReplayBufferSamples(
-            observations=CEMRLSacPolicyTensorInput(observation=obs, task_indicator=z),  # type: ignore
-            next_observations=CEMRLSacPolicyTensorInput(observation=next_obs, task_indicator=z),  # type: ignore
+            observations=CEMRLPolicyInput(observation=obs, task_indicator=z),  # type: ignore
+            next_observations=CEMRLPolicyInput(observation=next_obs, task_indicator=z),  # type: ignore
             actions=self.to_torch(self.actions[indices]),
             dones=self.to_torch(self.dones[indices] * (1 - self.timeouts[indices]))[..., None],
             rewards=rewards[..., None],

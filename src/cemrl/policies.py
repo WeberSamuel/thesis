@@ -1,4 +1,4 @@
-from typing import Any, Dict, Optional, Tuple, Type
+from typing import Any, Dict, Tuple, Type
 from gymnasium import spaces
 import numpy as np
 import torch as th
@@ -7,10 +7,10 @@ from src.core.state_aware_algorithm import StateAwarePolicy
 from stable_baselines3.common.off_policy_algorithm import OffPolicyAlgorithm
 from stable_baselines3.common.vec_env import VecEnv
 from src.envs.samplers.base_sampler import BaseSampler
-from src.cemrl.types import CEMRLObsTensorDict
+from src.cemrl.types import CEMRLObsTensorDict, CEMRLPolicyInput
 from src.cemrl.wrappers.cemrl_policy_wrapper import CEMRLPolicyVecWrapper, CEMRLPolicyWrapper
 from src.plan2explore.networks import Ensemble, WorldModel
-from src.cemrl.networks import Encoder
+from src.cemrl.networks import Decoder, Encoder
 from src.utils import apply_function_to_type
 
 
@@ -43,17 +43,19 @@ class CEMRLPolicy(StateAwarePolicy):
             spaces.flatdim(self.action_space),
             net_complexity,
         )
-        self.decoder = Ensemble(
-            th.nn.ModuleList(
-                [
-                    WorldModel(
-                        spaces.flatdim(o_obs_space),
-                        spaces.flatdim(self.action_space),
-                        latent_dim,
-                        net_complexity,
-                    )
-                    for i in range(decoder_ensemble_size)
-                ]
+        self.decoder = Decoder(
+            Ensemble(
+                th.nn.ModuleList(
+                    [
+                        WorldModel(
+                            spaces.flatdim(o_obs_space),
+                            spaces.flatdim(self.action_space),
+                            latent_dim,
+                            net_complexity,
+                        )
+                        for i in range(decoder_ensemble_size)
+                    ]
+                )
             )
         )
         self.latent_dim = latent_dim
@@ -70,27 +72,33 @@ class CEMRLPolicy(StateAwarePolicy):
     @th.no_grad()
     def _predict(
         self,
-        new_observation: CEMRLObsTensorDict,
+        observation: CEMRLObsTensorDict,
         deterministic: bool = False,
     ) -> th.Tensor:
-        observation:CEMRLObsTensorDict = self.state # type: ignore
-        for k, v in observation.items():  # type:ignore
-            v: th.Tensor
-            v[:, :-1] = v[:, 1:].clone()
-            v[:, -1] = new_observation[k]
+        prev_observation: CEMRLObsTensorDict = self.state  # type: ignore
 
         with th.no_grad():
-            y, z = self.encoder(observation)
-        policy_obs = {
-            "observation": observation["observation"][:, -1].to(self.sub_policy_algorithm.device),
-            "task_indicator": z.to(self.sub_policy_algorithm.device),
-        }
+            y, z, encoder_state = self.encoder(
+                self.encoder.from_obs_to_encoder_input(prev_observation, observation),
+                prev_observation["encoder_state"].transpose(1, 0),  # type: ignore
+            )
+        policy_obs = CEMRLPolicyInput(
+            observation=observation["observation"].to(self.sub_policy_algorithm.device),
+            task_indicator=z.to(self.sub_policy_algorithm.device),
+        )
+
         action = self.sub_policy_algorithm.policy._predict(policy_obs, deterministic)  # type: ignore
+
+        self.state = observation
+        self.state["encoder_state"] = encoder_state.transpose(1, 0)  # type: ignore
+
         return action
 
     def _reset_states(self, size: int) -> Tuple[np.ndarray, ...]:
-        return apply_function_to_type(
+        state = apply_function_to_type(
             self.observation_space.sample(),
             np.ndarray,
-            lambda x: th.zeros((size, self.encoder_window, *x.shape), device=self.device),
+            lambda x: th.zeros((size, *x.shape), device=self.device),
         )
+        state["encoder_state"] = th.zeros((size, self.encoder.num_classes, self.encoder.encoder_state_dim), device=self.device)
+        return state

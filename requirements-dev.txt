@@ -1,3 +1,4 @@
 mypy
 black
 pylint
+py-spy

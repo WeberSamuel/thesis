@@ -59,18 +59,18 @@ class NonStationaryWrapper(Wrapper):
         if self.mode in [ChangeModes.AFTER_TIMESTEP, ChangeModes.AFTER_TIMESTEP_WITH_PROBABILITY]:
             if np.random.random() < self.change_probability and self.change_after_timestep <= self.timestep:
                 self.unwrapped.change_goal()
-                info["goal_changed"] = True
+                info["goal_changed"] = self.unwrapped.goal_idx
                 self.timestep = 0
 
         if self.mode == ChangeModes.PROBABILITY and np.random.random() < self.change_probability:
             self.unwrapped.change_goal()
-            info["goal_changed"] = True
+            info["goal_changed"] = self.unwrapped.goal_idx
 
         if self.change_after_location is not None and not self.change_after_location.contains(obs):
             if np.random.random() < self.change_probability:
                 if self.timestep > self.change_after_timestep:
                     self.unwrapped.change_goal()
-                    info["goal_changed"] = True
+                    info["goal_changed"] = self.unwrapped.goal_idx
                     self.timestep = 0
 
         return obs, reward, terminated, truncated, info

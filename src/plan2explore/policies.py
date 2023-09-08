@@ -11,7 +11,6 @@ from src.utils import apply_function_to_type
 from stable_baselines3.common.type_aliases import Schedule
 
 
-
 class Plan2ExplorePolicy(StateAwarePolicy):
     """Base Policy of the Plan2Explore Algorithm.
 
@@ -24,7 +23,7 @@ class Plan2ExplorePolicy(StateAwarePolicy):
         observation_space: spaces.Space,
         action_space: spaces.Space,
         lr_schedule: Schedule,
-        ensemble: Ensemble,
+        ensemble: th.nn.Module,
         num_actions=3,
         num_timesteps=1,
         repeat_action=10,
@@ -80,7 +79,7 @@ class Plan2ExplorePolicy(StateAwarePolicy):
         reward_means = th.zeros(total_num_timesteps, self.num_actions, n_envs, 1)
 
         for timestep, actions in enumerate(timestep_actions):
-            (state_var, state_mean), (reward_var, reward_mean) = self.ensemble(observation, actions, z=z)
+            (state_var, state_mean), (reward_var, reward_mean) = self.ensemble({"obs":observation, "action":actions}, z=z)
             observation = state_mean
             state_vars[timestep] = state_var
             reward_means[timestep] = reward_mean
@@ -102,24 +101,27 @@ class CEMRLExplorationPolicy(Plan2ExplorePolicy):
         self.encoder = encoder
         self.optimizer = self.optimizer_class(self.parameters(), **self.optimizer_kwargs)
 
-    def _predict(self, new_observation: Dict[str, th.Tensor], deterministic: bool = False) -> th.Tensor:  # type: ignore
-        observation = self.state # type: ignore
-        for k, v in observation.items():  # type:ignore
-            v: th.Tensor
-            v[:, :-1] = v[:, 1:].clone()
-            v[:, -1] = new_observation[k]
+    def _predict(self, observation: Dict[str, th.Tensor], deterministic: bool = False) -> th.Tensor:  # type: ignore
+        prev_observation = self.state  # type: ignore
 
         with th.no_grad():
-            _, z = self.encoder(observation)
-        return super()._predict(new_observation["observation"], deterministic, z=z)
-    
+            _, z, state = self.encoder(
+                self.encoder.from_obs_to_encoder_input(prev_observation, observation),  # type: ignore
+                prev_observation["encoder_state"].transpose(1,0), # type: ignore
+            )
+
+        self.state = observation
+        observation["encoder_state"] = state.transpose(1,0)
+        return super()._predict(observation["observation"], deterministic, z=z)
+
     def _reset_states(self, size: int) -> dict[str, th.Tensor | np.ndarray] | Tuple[np.ndarray | th.Tensor, ...]:
-        return apply_function_to_type(
+        state = apply_function_to_type(
             self.observation_space.sample(),
             np.ndarray,
-            lambda x: th.zeros((size, 30, *x.shape), device=self.device),
+            lambda x: th.zeros((size, *x.shape), device=self.device),
         )
-
+        state["encoder_state"] = th.zeros((size, self.encoder.num_classes, self.encoder.encoder_state_dim), device=self.device)
+        return state
 
 
 class Plan2ExploreMPCPolicy(Plan2ExplorePolicy):
@@ -204,7 +206,6 @@ class Plan2ExploreMPCPolicy(Plan2ExplorePolicy):
             optim.zero_grad()
             loss.backward()
             optim.step()
-            
 
         if self._is_collecting:
             self.times_threshold_reached = self.times_threshold_reached + (1 if loss < self.mpc_loss_threshold else -1)

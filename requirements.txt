@@ -14,3 +14,5 @@ stable-baselines3
 gymnasium[mujoco]
 jsonargparse[signatures,omegaconf]
 gitpython
+moviepy
+gym

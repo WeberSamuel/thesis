@@ -1,13 +1,10 @@
 import os
-from typing import Any, Dict, Optional, Union
-import gymnasium as gym
+from typing import Any, Dict
 
-import torch as th
 import numpy as np
-from stable_baselines3.common.callbacks import BaseCallback, EvalCallback
-from stable_baselines3.common.logger import Video
+from stable_baselines3.common.callbacks import EvalCallback
 from gymnasium.wrappers.monitoring.video_recorder import VideoRecorder
-from stable_baselines3.common.vec_env import VecEnv
+import wandb
 
 class EvalInLogFolderCallback(EvalCallback):
     def __init__(self, *args, log_prefix="eval", **kwargs):
@@ -30,7 +27,7 @@ class EvalInLogFolderCallback(EvalCallback):
         super()._log_success_callback(locals_, globals_)
         info = locals_["info"]
         if isinstance(info, dict):
-            self.success_reward = +info.get("is_success", False)
+            self.success_reward += info.get("is_success", False)
             self.total_count += 1
         if self.callback_counter % self.eval_env.num_envs == 0:
             self.video_env.capture_frame()
@@ -44,13 +41,23 @@ class EvalInLogFolderCallback(EvalCallback):
         self.total_count = 0
         self.callback_counter = 0
         self.video_env = VideoRecorder(self.eval_env, os.path.join(self.video_dir, str(self.num_timesteps) + ".mp4"), enabled=is_going_to_evaluate, disable_logger=True)
+        
         result = step_function()
+        
         if is_going_to_evaluate:
-            frames = th.tensor(np.array(self.video_env.recorded_frames))[None].permute(0, 1, -1, 2, 3)[-600::3]
-            self.logger.record(self.log_prefix, Video(frames, fps=30))
+            frames = np.array(self.video_env.recorded_frames).transpose(0, -1, 1, 2)
+            wandb.log({self.log_prefix: wandb.Video(frames, fps=30)})
             self.video_env.close()
             self.logger.record(f"{self.log_prefix}/success_reward", self.success_reward / self.total_count)
         return result
 
     def _on_step(self) -> bool:
-        return self.step_wrapper(super()._on_step)
+        if hasattr(self.model.policy, "is_evaluating"):
+            setattr(self.model.policy, "is_evaluating", True)
+
+        result = self.step_wrapper(super()._on_step)
+
+        if hasattr(self.model.policy, "is_evaluating"):
+            setattr(self.model.policy, "is_evaluating", False)
+
+        return result

@@ -20,7 +20,7 @@ class Plan2ExplorePolicy(BasePolicy):
         best_selection_strategy=th.sum,
         num_actions=5,
         num_timesteps=20,
-        ensemble: Ensemble = None,
+        ensemble: th.nn.Module = None,
         latent_generator: th.nn.Module = None,
         **kwargs
     ):

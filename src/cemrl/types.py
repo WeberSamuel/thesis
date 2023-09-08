@@ -15,6 +15,6 @@ class CEMRLObsTensorDict(TypedDict):
     action: th.Tensor
 
 
-class CEMRLSacPolicyTensorInput(TypedDict):
+class CEMRLPolicyInput(TypedDict):
     observation: th.Tensor
     task_indicator: th.Tensor

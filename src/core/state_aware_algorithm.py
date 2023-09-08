@@ -121,12 +121,17 @@ class StateAwareOffPolicyAlgorithm(OffPolicyAlgorithm):
         tb_log_name: str = "run",
         progress_bar: bool = False,
     ) -> Tuple[int, BaseCallback]:
-        total_timesteps, callback = super()._setup_learn(
+        total_timesteps, orig_callback = super()._setup_learn(
             total_timesteps, callback, reset_num_timesteps, tb_log_name, progress_bar
         )
-        callback = CallbackList([self.state_storage, callback])
+        callback = CallbackList([self.state_storage])
         callback.init_callback(self)
+        callback.callbacks.append(orig_callback)
         return total_timesteps, callback
+    
+    def learn(self, total_timesteps: int, callback: MaybeCallback = None, log_interval: int = 4, tb_log_name: str = "run", reset_num_timesteps: bool = True, progress_bar: bool = False):
+        self.log_interval = log_interval
+        return super().learn(total_timesteps, callback, 999999999, tb_log_name, reset_num_timesteps, progress_bar)
     
     def _excluded_save_params(self) -> List[str]:
         return super()._excluded_save_params() + ["state_storage"]

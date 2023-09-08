@@ -8,6 +8,7 @@ from stable_baselines3.common.off_policy_algorithm import OffPolicyAlgorithm
 from stable_baselines3.common.buffers import DictReplayBuffer
 from stable_baselines3.common.vec_env import VecEnv
 
+from src.cemrl.buffers2 import CemrlReplayBuffer
 from src.core.state_aware_algorithm import StateAwareOffPolicyAlgorithm
 from src.cemrl.buffers1 import EpisodicReplayBuffer
 from src.cemrl.buffers import CEMRLReplayBuffer
@@ -30,7 +31,6 @@ class Plan2Explore(StateAwareOffPolicyAlgorithm):
             self._setup_model()
 
         self.policy: Plan2ExplorePolicy
-        self.scaler = th.cuda.amp.GradScaler()
         self.log_prefix = "p2e/"
 
     def train(self, gradient_steps: int, batch_size: int) -> None:
@@ -48,11 +48,11 @@ class Plan2Explore(StateAwareOffPolicyAlgorithm):
         self.policy.set_training_mode(True)
 
         for _ in range(gradient_steps):
-            if isinstance(self.replay_buffer, EpisodicReplayBuffer):
+            if isinstance(self.replay_buffer, (EpisodicReplayBuffer, CemrlReplayBuffer)):
                 enc_input, dec_input = self.replay_buffer.cemrl_sample(batch_size)
                 obs = dec_input.observations["observation"]
                 next_obs = dec_input.next_observations["observation"]
-                _, z = self.replay_buffer.encoder(enc_input.observations)
+                _, z, *_ = self.replay_buffer.encoder(self.replay_buffer.encoder.from_samples_to_encoder_input(enc_input))
                 dec_timesteps = dec_input.actions.shape[1]
                 z = th.broadcast_to(z[:, None], (batch_size, dec_timesteps, *z.shape[1:]))
                 z = z.reshape(batch_size * dec_timesteps, *z.shape[2:])
@@ -71,7 +71,7 @@ class Plan2Explore(StateAwareOffPolicyAlgorithm):
             z = None
             z = next_obs.get("goal", z)
 
-            if isinstance(self.replay_buffer, (CEMRLReplayBuffer, EpisodicReplayBuffer)):
+            if isinstance(self.replay_buffer, (CEMRLReplayBuffer, EpisodicReplayBuffer, CemrlReplayBuffer)):
                 z = obs["task_indicator"]
             elif self.policy.latent_generator is not None:
                 latent_input = CEMRLObsTensorDict(observation=obs["observation"], reward=rewards, action=actions)
@@ -80,7 +80,7 @@ class Plan2Explore(StateAwareOffPolicyAlgorithm):
             obs = obs["observation"]
             next_obs = next_obs["observation"]
 
-            pred_next_obs, pred_reward = self.policy.ensemble(obs, actions, z=z, return_raw=True)
+            pred_next_obs, pred_reward = self.policy.ensemble({"obs":obs, "action":actions, "return_raw":True}, z=z)
             obs_loss = th.nn.functional.mse_loss(pred_next_obs, next_obs[None].expand_as(pred_next_obs))
             reward_loss = th.nn.functional.mse_loss(pred_reward, rewards[None].expand_as(pred_reward))
             loss = obs_loss + reward_loss
@@ -90,9 +90,10 @@ class Plan2Explore(StateAwareOffPolicyAlgorithm):
             self.logger.record_mean(f"{self.log_prefix}loss", loss.detach().item())
 
             self.policy.optimizer.zero_grad()
-            self.scaler.scale(loss).backward()
-            self.scaler.step(self.policy.optimizer)
-            self.scaler.update()
+
+            loss.backward()
+
+            self.policy.optimizer.step()
 
         self._n_updates += gradient_steps
         self.logger.record(f"{self.log_prefix}n_updates", self._n_updates, exclude="tensorboard")

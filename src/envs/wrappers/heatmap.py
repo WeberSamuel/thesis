@@ -5,7 +5,7 @@ from gymnasium.spaces.utils import flatten_space, flatten
 
 
 class HeatmapWrapper(ObservationWrapper):
-    def __init__(self, env: Env, bin_size_per_dimension=512, idxs_2d: List[Tuple[int, int]] = [(0, 1)], cooling_factor=0.97):
+    def __init__(self, env: Env, bin_size_per_dimension=512, idxs_2d: List[Tuple[int, int]] = [(0, 1)], cooling_factor=0.999):
         super().__init__(env)
         self.idxs2d = idxs_2d
         self.cooling_factor = cooling_factor

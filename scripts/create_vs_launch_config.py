@@ -4,11 +4,12 @@ from pathlib import Path
 def iterate_variants(parent_path: Path, up_to: Path) -> list[list[Path]]:
     def return_variant_and_default(path: Path):
         default_variant = path / "default.yaml"
-        variants = path.glob("*.yaml")
-        if default_variant.exists() and len(list(variants)) > 1:
+        variants = list(path.glob("*.yaml"))
+        if default_variant.exists() and len(variants) > 1:
             for variant in variants:
                 if variant != default_variant:
                     yield [default_variant, variant]
+            yield [default_variant]
         else:
             yield list(path.glob("*.yaml"))
 
@@ -30,13 +31,11 @@ launch_config = """
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Python: Current File",
+            "name": "Python: Refresh launch.json",
             "type": "python",
-            "pythonArgs": ["-Xfrozen_modules=off"],
             "request": "launch",
-            "program": "${file}",
+            "program": "scripts/create_vs_launch_config.py",
             "console": "integratedTerminal",
-            "justMyCode": false
         },
 """
 config_path = Path("configs")
@@ -55,28 +54,38 @@ for path in paths:
             continue
 
         env_path = env / path.relative_to(variants_path)
-        env_path = [parent for parent in env_path.parents if parent.exists()]
-        env_variants = iterate_variants(env_path[0], env)
+        env_path = [parent for parent in env_path.parents if parent.exists()][0]
+        env_variants = iterate_variants(env_path, env)
 
         for env_variants_config in env_variants:
-            experiment_name = " - ".join(
+            experiment_name = "Train "
+            variant_name = " - ".join(
                 [
                     x.stem if x.stem != "default" else x.parent.stem
-                    for x in list(reversed(variants_configs)) + env_variants_config
+                    for x in list(reversed(variants_configs))
+                    if x.parent.stem != "variants" or x.stem != "default"
+                ]
+             )
+            experiment_name += variant_name
+            experiment_name += " on "
+            environment_name = " - ".join(
+                [
+                    x.stem if x.stem != "default" else x.parent.stem
+                    for x in env_variants_config
                     if x.parent.stem != "variants" or x.stem != "default"
                 ]
             )
+            experiment_name += environment_name
             launch_config += f"""
                 {{
                     "name": "{experiment_name}",
                     "type": "python",
-                    "pythonArgs": ["-Xfrozen_modules=off"],
                     "request": "launch",
                     "program": "cli.py",
                     "console": "integratedTerminal",
                     "justMyCode": false,
                     "args": [
-                        "--config", {', "--config", '.join([f'"{str(x)}"' for x in variants_configs + env_variants_config])}
+                        "--config", {', "--config", '.join([f'"{str(x)}"' for x in variants_configs + env_variants_config])}, "--main.algorithm.init_args.tensorboard_log", "logs/{environment_name.replace(" - ", "/")}", "--learn.tb_log_name", "{variant_name}", "train"
                     ]
                 }},
             """

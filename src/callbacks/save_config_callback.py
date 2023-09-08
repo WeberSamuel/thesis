@@ -41,7 +41,7 @@ class SaveConfigCallback(BaseCallback):
             tag_with_same_name = [t for t in repo.tags if t.name == tag_name]
             if len(tag_with_same_name) != 0:
                 repo.delete_tag(tag_with_same_name[0])
-            repo.create_tag(tag_name)
+            repo.create_tag(tag_name.replace(" ", "_"))
 
             path = os.path.join(log_dir, "git_info")
             branch = repo.active_branch
