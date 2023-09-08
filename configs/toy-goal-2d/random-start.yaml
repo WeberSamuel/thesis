@@ -1,7 +1,3 @@
-main:
-  algorithm:
-    init_args:
-      tensorboard_log: "logs/toy-goal-2d/cemrl/random-start"
 envs:
   env:
     init_args:

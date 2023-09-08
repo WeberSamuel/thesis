@@ -1,7 +1,3 @@
-main:
-  algorithm:
-    init_args:
-      tensorboard_log: "logs/toy-goal-1d/cemrl/multiple-tasks"
 envs:
   env:
     env:

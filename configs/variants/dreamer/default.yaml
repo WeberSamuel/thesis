@@ -1,0 +1,10 @@
+main:
+  algorithm: src.dreamer.dreamer.Dreamer
+  replay_buffer: src.dreamer.buffers.DreamerReplayBuffer
+  policy: src.dreamer.policies.DreamerPolicy
+sub_algorithm:
+  algorithm: null
+  policy: null
+exploration:
+  algorithm: null
+  policy: null

@@ -34,3 +34,5 @@ envs:
         goal_sampler: src.envs.samplers.UniformCircleSampler
   exploration_env: ${envs.env}
   exploration_eval_env: ${envs.eval_env}
+learn:
+  total_timesteps: 200_000

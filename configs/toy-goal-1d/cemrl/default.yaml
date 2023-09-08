@@ -1,9 +1,4 @@
 main:
-  algorithm:
-    init_args:
-      tensorboard_log: "logs/toy-goal-1d/cemrl"
   policy:
     init_args:
       latent_dim: 1
-learn:
-  total_timesteps: 200_000

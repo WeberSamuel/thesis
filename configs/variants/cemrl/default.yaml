@@ -12,5 +12,8 @@ sub_algorithm:
     init_args:
       learning_rate: 1e-3
   policy: stable_baselines3.sac.policies.MultiInputPolicy
+exploration:
+  algorithm: null
+  policy: null
 learn:
   tb_log_name: cemrl

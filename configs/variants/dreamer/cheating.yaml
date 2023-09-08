@@ -1,0 +1,6 @@
+main:
+  policy:
+    init_args:
+      dreamer_config:
+        encoder_mlp_keys: observation|goal$
+        decoder_mlp_keys: observation|goal$

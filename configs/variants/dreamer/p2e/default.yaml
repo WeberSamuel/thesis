@@ -1,0 +1,7 @@
+main:
+  policy:
+    init_args:
+      dreamer_config:
+        expl_behavior: plan2explore
+learn:
+  tb_log_name: dreamer-p2e

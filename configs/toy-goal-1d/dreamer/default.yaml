@@ -1,0 +1,7 @@
+main:
+  policy:
+    init_args:
+      dreamer_config:
+        meta_num_classes: 1
+        meta_latent_dim: 1
+        meta_encoder_complexity: 40.0
