@@ -49,6 +49,8 @@ class CEMRLWrapper(ObservationWrapper):
 
     def step(self, action: np.ndarray):
         obs, reward, terminated, truncated, info = self.env.step(action)
+        self.step_count += 1
+        info.setdefault("step_count", self.step_count)
         return self.observation(obs, action, reward, terminated, info), reward, terminated, truncated, info
 
     def reset(self, **kwargs):
@@ -56,6 +58,7 @@ class CEMRLWrapper(ObservationWrapper):
         info.setdefault("is_first", True)
         action = np.zeros_like(self.action_space.low)
         obs = self.observation(obs, action, 0.0, False, info)
+        self.step_count = 0
         return obs, info
 
     def observation(self, obs: Any, action: Any, reward: Any, terminated: Any, info: dict[str, Any]) -> dict[str, Any]:

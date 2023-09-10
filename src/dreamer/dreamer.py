@@ -39,5 +39,4 @@ class Dreamer(StateAwareOffPolicyAlgorithm):
         for name, values in self.policy.dreamer._metrics.items():
             self.logger.record(name, float(np.mean(values)))
             self.policy.dreamer._metrics[name] = []
-        if self.num_timesteps // self.n_envs % self.log_interval == 0:
-            self._dump_logs()
+        self.dump_logs_if_neccessary()

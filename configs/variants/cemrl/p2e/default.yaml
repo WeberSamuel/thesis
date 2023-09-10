@@ -13,6 +13,6 @@ callback:
 exploration:
   algorithm: src.plan2explore.plan2explore.Plan2Explore
   policy: src.plan2explore.policies.CEMRLExplorationPolicy
-  replay_buffer: src.cemrl.buffers.CEMRLReplayBuffer
+  replay_buffer: src.cemrl.buffers2.CemrlReplayBuffer
 learn:
   tb_log_name: cemrl-p2e

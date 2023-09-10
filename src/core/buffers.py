@@ -23,7 +23,9 @@ class Storage:
         self.max_episode_length = max_episode_length
         self.num_episodes = num_episodes
         num_episodes = num_episodes + 1  # last is a dummy
-        self.episode_lengths = np.zeros(num_episodes, dtype=np.int64)
+        self.episode_lengths = np.zeros(num_episodes, dtype=np.int16)
+        self.checkout = np.zeros(num_episodes, dtype=bool)
+        self.changed = False
 
         self.observations: Dict[str, np.ndarray] = {key: np.zeros((num_episodes, max_episode_length, *space.shape), dtype=space.dtype) for key, space in obs_space.items()}  # type: ignore
         self.next_observations: Dict[str, np.ndarray] = {key: np.zeros((num_episodes, max_episode_length, *space.shape), dtype=space.dtype) for key, space in obs_space.items()}  # type: ignore
@@ -31,16 +33,19 @@ class Storage:
         self.actions = np.zeros((num_episodes, max_episode_length, *action_space.shape), dtype=action_space.dtype)
         self.dones = np.zeros((num_episodes, max_episode_length), dtype=np.float32)
         self.timeouts = np.zeros((num_episodes, max_episode_length), dtype=np.float32)
-        self.first = np.zeros((num_episodes, max_episode_length), dtype=np.float32)
-        self.changed = False
 
     def __len__(self):
         return self.num_episodes if self.full else self.pos
 
     def start_new_episode(self, n_env: int):
-        result = np.arange(self.pos, self.pos + n_env) % self.num_episodes
+        if n_env == 0:
+            return np.array([], dtype=np.int64)
+        all_eps_idx_from_pos_on = np.arange(self.pos, self.num_episodes + self.pos) % self.num_episodes
+        result = np.where(self.checkout[all_eps_idx_from_pos_on] != True)[0][:n_env]
+        result = all_eps_idx_from_pos_on[result]
         self.episode_lengths[result] = 0
-        self.pos = self.pos + n_env
+        self.checkout[result] = True
+        self.pos = result.max() + 1
         if self.pos > self.num_episodes:
             self.full = True
             self.pos = self.pos % self.num_episodes
@@ -58,6 +63,7 @@ class Storage:
         self.dones[episode_idxs, pos] = data.dones
         self.timeouts[episode_idxs, pos] = data.timeouts
         self.episode_lengths[episode_idxs] += 1
+        self.checkout[episode_idxs[data.dones]] = False
 
 
 class ReplayBuffer(DictReplayBuffer):
@@ -108,9 +114,9 @@ class ReplayBuffer(DictReplayBuffer):
         data = DataTemplate(
             obs=obs,
             next_obs=next_obs,
-            actions=np.array(action.reshape((self.n_envs, self.action_dim))).copy(),
-            rewards=np.array(reward).copy(),
-            dones=np.array(done).copy(),
+            actions=action.reshape((self.n_envs, self.action_dim)),
+            rewards=reward,
+            dones=done,
             timeouts=np.array([info.get("TimeLimit.truncated", False) for info in infos]),
         )
 

@@ -9,5 +9,3 @@ callback:
 exploration:
   algorithm: src.smm.smm.SMM
   policy: src.smm.policies.SMMPolicy
-learn:
-  tb_log_name: cemrl-smm

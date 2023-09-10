@@ -38,8 +38,8 @@ class CemrlStorage(Storage):
         changed = np.array(["goal_changed" in info for info in infos])
         changed_to = np.array([info["goal_changed"] for info in infos if "goal_changed" in info], dtype=np.int32).squeeze()
 
-        self.goal_ep_start_stop[changed_to, episode_idxs[changed], 0] = (
-            self.episode_lengths[episode_idxs[changed]] + 1
+        self.goal_ep_start_stop[changed_to, episode_idxs[changed]] = (
+            self.episode_lengths[episode_idxs[changed], None] + 1
         )  # TODO: check if goal changed for this or one later
         self.goal_ep_start_stop[goals, episode_idxs, 1] = self.episode_lengths[episode_idxs] + 1
 
@@ -55,7 +55,7 @@ class CemrlReplayBuffer(ReplayBuffer):
         buffer_size: int,
         observation_space: spaces.Dict,
         action_space: spaces.Box,
-        encoder: Encoder,
+        encoder: Encoder|None = None,
         encoder_context: int = 30,
         max_episode_length: int = 1000,
         num_goals: int = 1000,
@@ -81,26 +81,27 @@ class CemrlReplayBuffer(ReplayBuffer):
         self.num_multi_episode_decoder_target = num_multi_episode_decoder_target
 
     def sample(self, batch_size: int, env: VecNormalize | None = None):
-        self.prepare_sampling_if_necessary()
+        if self.encoder is None:
+            return super().sample(batch_size, env)
+        else:
+            self.prepare_sampling_if_necessary()
+            episode_idxs = np.random.choice(self.valid_episodes, size=batch_size)
+            sample_idxs = np.random.randint(0, self.storage.episode_lengths[episode_idxs], size=batch_size)
+            encoder_context = self._get_context(episode_idxs, sample_idxs, env, self.encoder_context)
+            with th.no_grad():
+                _, z, _ = self.encoder(self.encoder.from_samples_to_encoder_input(encoder_context))
 
-        episode_idxs = np.random.choice(self.valid_episodes, size=batch_size)
-        sample_idxs = np.random.randint(0, self.storage.episode_lengths[episode_idxs], size=batch_size)
-        encoder_context = self._get_context(episode_idxs, sample_idxs, env, self.encoder_context)
-
-        with th.no_grad():
-            _, z, _ = self.encoder(self.encoder.from_samples_to_encoder_input(encoder_context))
-
-        return DictReplayBufferSamples(
-            observations=CEMRLPolicyInput(
-                observation=encoder_context.observations["observation"][:, -1], task_indicator=z
-            ),  # type: ignore
-            actions=encoder_context.actions[:, -1],
-            next_observations=CEMRLPolicyInput(
-                observation=encoder_context.next_observations["observation"][:, -1], task_indicator=z
-            ),  # type: ignore
-            dones=encoder_context.dones[:, -1],
-            rewards=encoder_context.rewards[:, -1],
-        )
+            return DictReplayBufferSamples(
+                observations=CEMRLPolicyInput(
+                    observation=encoder_context.observations["observation"][:, -1], task_indicator=z
+                ),  # type: ignore
+                actions=encoder_context.actions[:, -1],
+                next_observations=CEMRLPolicyInput(
+                    observation=encoder_context.next_observations["observation"][:, -1], task_indicator=z
+                ),  # type: ignore
+                dones=encoder_context.dones[:, -1],
+                rewards=encoder_context.rewards[:, -1],
+            )
 
     def cemrl_sample(
         self, batch_size: int, env: VecNormalize | None = None, encoder_batch_length=30, decoder_batch_length=400
@@ -111,7 +112,7 @@ class CemrlReplayBuffer(ReplayBuffer):
         sample_idxs = np.random.randint(0, self.storage.episode_lengths[episode_idxs], size=batch_size)
 
         encoder_context = self._get_context(episode_idxs, sample_idxs, env, self.encoder_context)
-        decoder_targets = self.get_decoder_targets(env, episode_idxs, sample_idxs)
+        decoder_targets = self.get_decoder_targets(env, episode_idxs, sample_idxs, decoder_batch_length)
         return encoder_context, decoder_targets
 
     def get_decoder_targets(self, env, episode_idxs, sample_idxs, num_targets=64):

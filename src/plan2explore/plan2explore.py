@@ -97,3 +97,4 @@ class Plan2Explore(StateAwareOffPolicyAlgorithm):
 
         self._n_updates += gradient_steps
         self.logger.record(f"{self.log_prefix}n_updates", self._n_updates, exclude="tensorboard")
+        self.dump_logs_if_neccessary()

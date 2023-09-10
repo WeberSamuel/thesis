@@ -21,7 +21,7 @@ def train_encoder(
     # helper variables
     batch_size, decoder_batch_lenght = decoder_samples.actions.shape[:2]
     device = encoder_samples.actions.device
-    num_classes = y_distribution.batch_shape[-1]
+    num_classes = y_distribution.probs.shape[-1] # type: ignore
 
     # calculate component losses
     kl_qz_pz = th.empty(batch_size, num_classes, device=device)
@@ -29,7 +29,7 @@ def train_encoder(
     reward_losses = th.empty(batch_size, num_classes, device=device)
     nll_px = th.empty(batch_size, num_classes, device=device)
 
-    for y in range(y_distribution.probs.shape[-1]): # type: ignore
+    for y in range(num_classes):
         _, z = encoder.sample(y_distribution, z_distributions, y_int=y) # type: ignore
         # resize z to match decoder batch lenght
         z = z.unsqueeze(1).repeat(1, decoder_batch_lenght, 1)
@@ -73,10 +73,14 @@ def train_encoder(
     # Calling the step function on an Optimizer makes an update to its parameters
     optimizer.step()
 
-    loss = loss / batch_size
-    state_loss = th.mean(state_losses)
-    reward_loss = th.mean(reward_losses)
-
+    metrics = {
+        "loss": loss / batch_size,
+        "state_loss": th.mean(state_losses),
+        "reward_loss": th.mean(reward_losses),
+        "kl_qz_pz": th.mean(kl_qz_pz),
+        "kl_qy_py": th.mean(kl_qy_py),
+    }
+    
     encoder.train(False)
 
-    return loss, state_loss, reward_loss
+    return loss, metrics

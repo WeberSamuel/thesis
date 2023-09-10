@@ -63,16 +63,16 @@ class Encoder(th.nn.Module):
 
     def encode(self, encoder_input: th.Tensor, encoder_state: th.Tensor | None = None):
         encoder_input = self.pre_process_input(encoder_input)
-        all_m, last_m = self.encoder.forward(encoder_input, encoder_state)
-        last_m = last_m.squeeze(0)
-        y = self.class_encoder(last_m)
-        class_mu_sigma = th.stack([class_net(last_m) for class_net in self.gauss_encoder_list])
+        _, m = self.encoder(encoder_input, encoder_state)
+        m = m.squeeze(dim=0)
+        y = self.class_encoder(m)
+        class_mu_sigma = th.stack([class_net(m) for class_net in self.gauss_encoder_list])
         mus, sigmas = th.split(class_mu_sigma, self.latent_dim, dim=-1)
         sigmas = th.nn.functional.softplus(sigmas)
 
         y_distribution = Categorical(probs=y)
         z_distributions = [Normal(mu, sigma) for mu, sigma in zip(mus, sigmas)]
-        return y_distribution, z_distributions, last_m[None]
+        return y_distribution, z_distributions, m[None]
 
     def sample(
         self,
@@ -101,8 +101,8 @@ class Encoder(th.nn.Module):
         return th.cat(
             [
                 encoder_context.observations["observation"],
-                encoder_context.actions,
-                encoder_context.rewards,
+                encoder_context.next_observations["action"],
+                encoder_context.next_observations["reward"],
                 encoder_context.next_observations["observation"],
             ],
             dim=-1,

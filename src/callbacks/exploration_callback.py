@@ -7,8 +7,7 @@ from stable_baselines3.common.type_aliases import TrainFreq, TrainFrequencyUnit
 from stable_baselines3.common.vec_env import VecEnv
 from src.envs.meta_env import MetaMixin
 
-from src.cemrl.buffers import CEMRLReplayBuffer
-
+from src.core.buffers import ReplayBuffer
 
 class MaybeNoTraining:
     """
@@ -123,7 +122,7 @@ class ExplorationCallback(BaseCallback):
         steps_per_rollout=2,
         pre_train_steps=200,
         train_on_rollout: bool = False,
-        exploration_log_interval = 1,
+        exploration_log_interval = 8,
         use_model_buffer: bool = True,
         verbose: int = 0,
     ):
@@ -146,10 +145,19 @@ class ExplorationCallback(BaseCallback):
 
     def _init_callback(self) -> None:
         assert isinstance(self.model, OffPolicyAlgorithm)
-        self._store_callback = StoreExplorationToBufferCallback(self.model)
         
         if self.use_model_buffer and self.model.replay_buffer is not None and isinstance(self.exploration_algorithm, OffPolicyAlgorithm):
-            self.exploration_algorithm.replay_buffer = self.model.replay_buffer
+            self._store_callback = None
+            explore_buffer = self.exploration_algorithm.replay_buffer
+            if isinstance(explore_buffer, ReplayBuffer) and isinstance(self.model.replay_buffer, ReplayBuffer):
+                explore_buffer.storage = self.model.replay_buffer.storage
+                explore_buffer.storage_idxs = explore_buffer.storage.start_new_episode(len(explore_buffer.storage_idxs))
+                if hasattr(self.model.replay_buffer, "encoder"):
+                    setattr(explore_buffer, "encoder", getattr(self.model.replay_buffer, "encoder"))
+            else:
+                self.exploration_algorithm.replay_buffer = self.model.replay_buffer
+        else:
+            self._store_callback = StoreExplorationToBufferCallback(self.model)
 
         # copy goal sampler
         assert self.model.env is not None and self.exploration_algorithm.env is not None
@@ -178,9 +186,9 @@ class ExplorationCallback(BaseCallback):
         return super()._on_training_start()
 
     def _on_rollout_start(self) -> None:
+        if isinstance(self.exploration_algorithm, OffPolicyAlgorithm):
+            self.exploration_algorithm.gradient_steps = 1
         with MaybeNoTraining(not self.train_on_rollout, self.exploration_algorithm):
-            if isinstance(self.exploration_algorithm, OffPolicyAlgorithm):
-                self.exploration_algorithm.gradient_steps = 1
             self.exploration_algorithm.learn(
                 self.steps_per_rollout,
                 self._store_callback,
@@ -188,7 +196,7 @@ class ExplorationCallback(BaseCallback):
                 tb_log_name="exploration",
                 reset_num_timesteps=False,
             )
-        if isinstance(self.exploration_algorithm, OffPolicyAlgorithm):
+        if self.train_on_rollout and isinstance(self.exploration_algorithm, OffPolicyAlgorithm):
             self.exploration_algorithm._dump_logs()
         return super()._on_rollout_start()
 

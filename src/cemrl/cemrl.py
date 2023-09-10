@@ -102,13 +102,13 @@ class CEMRL(StateAwareOffPolicyAlgorithm):
             batch_size (int): Batch size used in the training
         """
         for _ in range(self.encoder_grad_steps):
-            loss, state_loss, reward_loss = train_encoder(self.policy.encoder, self.policy.decoder, *self.replay_buffer.cemrl_sample(batch_size, self.get_vec_normalize_env()), self.policy.optimizer)
+            loss, metrics = train_encoder(self.policy.encoder, self.policy.decoder, *self.replay_buffer.cemrl_sample(batch_size, self.get_vec_normalize_env()), self.policy.optimizer)
 
-            self.logger.record_mean("reconstruction/loss", loss.item())
-            self.logger.record_mean("reconstruction/state_loss", state_loss.item())
-            self.logger.record_mean("reconstruction/reward_loss", reward_loss.item())
+            for k,v in metrics.items():
+                self.logger.record_mean("reconstruction/"+k, v.item())
 
         self.policy.sub_policy_algorithm.train(self.policy_grad_steps, batch_size)
+        self.dump_logs_if_neccessary()
 
     def _excluded_save_params(self) -> List[str]:
         return super()._excluded_save_params() + ["extension"]
