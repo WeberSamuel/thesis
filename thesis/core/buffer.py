@@ -25,7 +25,7 @@ class Storage:
         num_episodes = num_episodes + 1  # last is a dummy
         self.episode_lengths = np.zeros(num_episodes, dtype=np.int16)
         self.checkout = np.zeros(num_episodes, dtype=bool)
-        self.changed = False
+        self.changed = True
 
         self.observations: Dict[str, np.ndarray] = {key: np.zeros((num_episodes, max_episode_length, *space.shape), dtype=space.dtype) for key, space in obs_space.items()}  # type: ignore
         self.next_observations: Dict[str, np.ndarray] = {key: np.zeros((num_episodes, max_episode_length, *space.shape), dtype=space.dtype) for key, space in obs_space.items()}  # type: ignore
@@ -86,7 +86,7 @@ class ReplayBuffer(DictReplayBuffer):
         self.pos = np.zeros_like(self.n_envs, dtype=np.int64)
         self.prepared_sampling = False
         if storage is None:
-            storage = Storage(buffer_size, max_episode_length, observation_space, action_space)
+            storage = Storage(buffer_size // max_episode_length, max_episode_length, observation_space, action_space)
         self.storage = storage
         self.storage_idxs = storage.start_new_episode(self.n_envs)
 
@@ -149,12 +149,12 @@ class ReplayBuffer(DictReplayBuffer):
         context_length: int = 64,
     ) -> DictReplayBufferSamples:
         if sample_idx is None:
-            sample_idx = np.random.randint(1, self.storage.episode_lengths[episode_idx], size=len(episode_idx))
+            sample_idx = np.random.randint(0, self.storage.episode_lengths[episode_idx], size=len(episode_idx))
         sample_idxs = np.repeat(sample_idx, context_length)
-        sample_idxs = np.tile(-np.arange(context_length)[::-1], len(episode_idx)) + sample_idxs  # type: ignore
+        sample_idxs = sample_idxs - np.tile(np.arange(context_length)[::-1], len(episode_idx))  # type: ignore
         episode_idxs = np.repeat(episode_idx, context_length)
 
-        # trick to load zeros for all data before the first step as last episode in storage is dummy
+        # trick to load zeros for all data before the first step as last episode in storage is dummy zero
         episode_idxs[sample_idxs < 0] = -1
 
         samples = self._get_samples(episode_idxs, sample_idxs, env=env)
@@ -256,16 +256,17 @@ class ReplayBuffer(DictReplayBuffer):
         data.dones[(to_batch_idx, to_sample_idx)] = self.storage.dones[(from_episodes, from_samples)]
         data.timeouts[(to_batch_idx, to_sample_idx)] = self.storage.timeouts[(from_episodes, from_samples)]
 
-
-class PrepareGoalToEpisode:
-    def __init__(self, *args, **kwargs) -> None:
-        super().__init__(*args, **kwargs)
-
-    def prepare_sampling(self, storage: Storage):
-        if "goal_idx" not in storage.observations:
-            raise ValueError("goal_idx not in storage.observations")
-        self.goal_to_episode = {}
-        for episode, goal_idxs in enumerate(storage.observations["goal_idx"][: len(storage)]):
-            for goal_idx in np.unique(goal_idxs):
-                episodes = self.goal_to_episode.setdefault(goal_idx, [])
-                episodes.append(episode)
+    def get_episodes(self, episode_idxs: np.ndarray, select_lenghts: np.ndarray|None = None) -> list[DataTemplate]:
+        lengths = select_lenghts if select_lenghts is not None else self.storage.episode_lengths[episode_idxs]
+        result = []
+        for ep_idx, ep_length in zip(episode_idxs, lengths):
+            result.append(DataTemplate(
+                obs={k: v[ep_idx, :ep_length] for k, v in self.storage.observations.items()},
+                next_obs={k: v[ep_idx, :ep_length] for k, v in self.storage.next_observations.items()},
+                actions=self.storage.actions[ep_idx, :ep_length],
+                rewards=self.storage.rewards[ep_idx, :ep_length],
+                dones=self.storage.dones[ep_idx, :ep_length],
+                timeouts=self.storage.timeouts[ep_idx, :ep_length],
+            ))
+        return result
+        

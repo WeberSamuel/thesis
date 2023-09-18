@@ -62,7 +62,7 @@ class P2EPolicy(StateAwarePolicy):
         self.embedded_state_size = embedded_state_size
         self.cemrl_encoder = encoder
         if isinstance(observation_space, spaces.Dict):
-            obs_shape = observation_space["observation"].shape[1:]  # type: ignore
+            obs_shape = observation_space["observation"].shape  # type: ignore
         else:
             obs_shape = observation_space.shape
         assert obs_shape is not None

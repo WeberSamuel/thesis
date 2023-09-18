@@ -1,20 +1,17 @@
-import bisect
 from typing import Literal
+
 import numpy as np
-from stable_baselines3.common.type_aliases import DictReplayBufferSamples
-from stable_baselines3.common.vec_env import VecNormalize
 import torch as th
 from gymnasium import spaces
-from src.core.buffers import DataTemplate, Storage, ReplayBuffer
-from src.cemrl.networks import Encoder
-from src.cemrl.types import CEMRLPolicyInput
 from scipy.stats import binned_statistic
+from stable_baselines3.common.type_aliases import DictReplayBufferSamples
+from stable_baselines3.common.vec_env import VecNormalize
 
+from thesis.core.buffer import Storage
 
-class Slice:
-    def __init__(self, start: int, end: int) -> None:
-        self.start = start
-        self.end = end
+from ..core.buffer import DataTemplate, ReplayBuffer, Storage
+from .policy import CemrlPolicyInput
+from .task_inference import EncoderInput, TaskInference
 
 
 class CemrlStorage(Storage):
@@ -22,9 +19,6 @@ class CemrlStorage(Storage):
         self, num_episodes: int, max_episode_length: int, num_goals: int, obs_space: spaces.Dict, action_space: spaces.Box
     ) -> None:
         super().__init__(num_episodes, max_episode_length, obs_space, action_space)
-        self.goal_idx_to_episode_slices: dict[int, dict[int, Slice]] = {}
-        self.current_wip_slices: dict[int, Slice] = {}
-
         self.num_goals = num_goals
         self.goal_ep_start_stop = np.zeros((num_goals, num_episodes, 2), dtype=np.int16)
         self.goal_ep_length = np.zeros((num_goals, num_episodes), dtype=np.int16)
@@ -52,21 +46,21 @@ class CemrlStorage(Storage):
 
 class CemrlReplayBuffer(ReplayBuffer):
     storage: CemrlStorage
+    task_inference: TaskInference
+    prepared_decoder_sampling: bool = False
 
     def __init__(
         self,
         buffer_size: int,
         observation_space: spaces.Dict,
         action_space: spaces.Box,
-        encoder: Encoder | None = None,
-        encoder_context: int = 30,
         max_episode_length: int = 1000,
         num_goals: int = 1000,
         device: th.device | str = "auto",
         n_envs: int = 1,
         decoder_context_mode: Literal["random", "sequential"] = "random",
         optimize_memory_usage: bool = False,
-        handle_timeout_termination: bool = True,
+        encoder_context_length: int = 30,
     ):
         super().__init__(
             buffer_size,
@@ -76,66 +70,75 @@ class CemrlReplayBuffer(ReplayBuffer):
             device,
             n_envs,
             optimize_memory_usage,
-            handle_timeout_termination,
-            CemrlStorage(buffer_size // max_episode_length, max_episode_length, num_goals, observation_space, action_space),
+            storage=CemrlStorage(
+                buffer_size // max_episode_length, max_episode_length, num_goals, observation_space, action_space
+            ),
         )
-        self.encoder = encoder
-        self.encoder_context = encoder_context
         self.decoder_context_mode = decoder_context_mode
+        self.encoder_context_length = encoder_context_length
 
     def sample(self, batch_size: int, env: VecNormalize | None = None):
-        if self.encoder is None:
+        if self.task_inference is None:
             return super().sample(batch_size, env)
         else:
             self.prepare_sampling_if_necessary()
             episode_idxs, sample_idxs = self.get_sample_idxs(batch_size)
-            encoder_context = self._get_context(episode_idxs, sample_idxs, env, self.encoder_context)
+
+            encoder_context = self._get_context(episode_idxs, sample_idxs, env, self.encoder_context_length)
             with th.no_grad():
-                _, z, _ = self.encoder(self.encoder.from_samples_to_encoder_input(encoder_context))
+                z, _, _ = self.task_inference(
+                    EncoderInput(
+                        obs=encoder_context.observations["observation"],
+                        action=encoder_context.actions,
+                        reward=encoder_context.rewards,
+                        next_obs=encoder_context.next_observations["observation"],
+                    )
+                )
+
+            policy_obs = CemrlPolicyInput(obs=encoder_context.observations["observation"][:, -1], task_encoding=z)
+            policy_next_obs = CemrlPolicyInput(obs=encoder_context.next_observations["observation"][:, -1], task_encoding=z)
 
             return DictReplayBufferSamples(
-                observations=CEMRLPolicyInput(
-                    observation=encoder_context.observations["observation"][:, -1], task_indicator=z
-                ),  # type: ignore
+                observations=policy_obs,  # type: ignore
                 actions=encoder_context.actions[:, -1],
-                next_observations=CEMRLPolicyInput(
-                    observation=encoder_context.next_observations["observation"][:, -1], task_indicator=z
-                ),  # type: ignore
+                next_observations=policy_next_obs,  # type: ignore
                 dones=encoder_context.dones[:, -1],
                 rewards=encoder_context.rewards[:, -1],
             )
 
-    def get_sample_idxs(self, batch_size, limit_to_goals_if_weighted=None):
-        # if self.decoder_context_mode == "random":
-        #     if limit_to_goals_if_weighted is None:
-        #         limit_to_goals_if_weighted = np.arange(self.storage.num_goals)
-        #     goal_lengths = self.storage.goal_ep_length[limit_to_goals_if_weighted].sum(axis=1)
-        #     available_goals = np.where(goal_lengths > 0)[0]
-        #     goals = np.random.choice(available_goals, size=batch_size, replace=True)
-        #     samples = []
-        #     for goal, length in zip(limit_to_goals_if_weighted[goals], goal_lengths[goals]):
-        #         samples.append(np.random.choice(length, 1, p=self.goal_to_sample_weights[goal, :length]))
-        #     samples = np.concatenate(samples, axis=0)
-        #     samples = self.goal_idx_to_episode_sample_indices[limit_to_goals_if_weighted[goals], samples]
-        #     episode_idxs = samples[..., 0]
-        #     sample_idxs = samples[..., 1]
-        # else:
-        episode_idxs = np.random.choice(self.valid_episodes, size=batch_size)
-        sample_idxs = np.random.randint(0, self.storage.episode_lengths[episode_idxs], size=batch_size)
-        return episode_idxs, sample_idxs
-
     def cemrl_sample(
-        self, batch_size: int, env: VecNormalize | None = None, encoder_batch_length=30, decoder_batch_length=400
+        self, batch_size: int, env: VecNormalize | None = None, encoder_context_length=30, decoder_context_length=400
     ):
         self.prepare_sampling_if_necessary()
 
         episode_idxs, sample_idxs = self.get_sample_idxs(batch_size)
 
-        encoder_context = self._get_context(episode_idxs, sample_idxs, env, self.encoder_context)
-        decoder_targets = self.get_decoder_targets(env, episode_idxs, sample_idxs, decoder_batch_length)
+        encoder_context = self._get_context(episode_idxs, sample_idxs, env, encoder_context_length)
+        decoder_targets = self.get_decoder_targets(episode_idxs, sample_idxs, decoder_context_length, env)
         return encoder_context, decoder_targets
 
-    def get_decoder_targets(self, env, episode_idxs, sample_idxs, num_targets=64):
+    def get_sample_idxs(self, batch_size, limit_to_goals_if_weighted=None):
+        if self.decoder_context_mode == "random":
+            if limit_to_goals_if_weighted is None:
+                limit_to_goals_if_weighted = np.arange(self.storage.num_goals)
+            goal_lengths = self.storage.goal_ep_length[limit_to_goals_if_weighted].sum(axis=1)
+            available_goals = np.where(goal_lengths > 0)[0]
+            goals = np.random.choice(available_goals, size=batch_size, replace=True)
+            samples = []
+            for goal, length in zip(limit_to_goals_if_weighted[goals], goal_lengths[goals]):
+                samples.append(np.random.choice(length, 1, p=self.goal_to_sample_weights[goal, :length]))
+            samples = np.concatenate(samples, axis=0)
+            samples = self.goal_idx_to_episode_sample_indices[limit_to_goals_if_weighted[goals], samples]
+            episode_idxs = samples[..., 0]
+            sample_idxs = samples[..., 1]
+        else:
+            episode_idxs = np.random.choice(self.valid_episodes, size=batch_size)
+            sample_idxs = np.random.randint(0, self.storage.episode_lengths[episode_idxs], size=batch_size)
+        return episode_idxs, sample_idxs
+
+    def get_decoder_targets(
+        self, episode_idxs: np.ndarray, sample_idxs: np.ndarray, num_targets: int = 64, env: VecNormalize | None = None
+    ):
         batch_size = len(episode_idxs)
         sample_goals = self.storage.next_observations["goal_idx"][episode_idxs, sample_idxs].astype(np.int32).squeeze(-1)
         goal_ep_start_stop = self.storage.goal_ep_start_stop[sample_goals]
@@ -182,6 +185,7 @@ class CemrlReplayBuffer(ReplayBuffer):
         return self.post_process_samples(data, env)
 
     def prepare_sampling(self, storage: Storage):
+        super().prepare_sampling(storage)
         if self.decoder_context_mode == "random":
             goal_length = self.storage.goal_ep_length.sum(axis=1)
             max_goal_ep_lenght = goal_length.max()
@@ -208,12 +212,3 @@ class CemrlReplayBuffer(ReplayBuffer):
                 count, _, bin = binned_statistic(rewards, rewards, statistic="count")
                 prob = 1 / count[bin - 1]
                 self.goal_to_sample_weights[goal_idx, : goal_length[goal_idx]] = prob / prob.sum()
-
-        # goal_to_indices = {}
-        # not_empty_idx = np.where(self.storage.goal_ep_length > 0)
-        # for goal_idx, ep_idx in zip(not_empty_idx[0], not_empty_idx[1]):
-        #     ep_idx = np.full(self.storage.goal_ep_length[goal_idx, ep_idx], ep_idx, dtype=np.int32)
-        #     sample_idx = np.arange(*self.storage.goal_ep_start_stop[goal_idx, ep_idx], dtype=np.int32)
-        #     goal_to_indices.setdefault(goal_idx, []).append((ep_idx, sample_idx))
-        # self.goal_to_indices = goal_to_indices
-        super().prepare_sampling(storage)

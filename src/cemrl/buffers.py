@@ -148,9 +148,7 @@ class CEMRLReplayBuffer(DictReplayBuffer):
             ) % self.explore_buffer_size + self.buffer_size
             explore = np.setdiff1d(explore, without)
 
-        return np.concatenate(
-            [np.arange(self.normal_size()), np.arange(self.buffer_size, self.buffer_size + self.explore_size())]
-        )
+        return np.concatenate([normal, explore])
 
     def dreamer_sample(
         self, batch_size: int, env: VecNormalize | None = None, goals: np.ndarray | None = None, max_length: int = 64
@@ -202,14 +200,10 @@ class CEMRLReplayBuffer(DictReplayBuffer):
         """
         assert self.encoder is not None
         indices = np.random.choice(self.valid_indices(), batch_size)
-        encoder_context = self.get_encoder_context(indices, env)
+        encoder_context: ReplayBufferSamples = self.get_encoder_context(indices, env)
         with th.no_grad():
-            _, z = self.encoder(
-                CEMRLObsTensorDict(
-                    observation=encoder_context.next_observations,
-                    action=encoder_context.actions,
-                    reward=encoder_context.rewards,
-                )
+            _, z, _ = self.encoder(
+                th.cat([encoder_context.next_observations[:, :-1], encoder_context.actions[:, 1:], encoder_context.rewards[:, 1:], encoder_context.next_observations[:, 1:]], dim=-1)
             )
 
         obs = self.to_torch(self._normalize_obs(self.observations[indices], env))  # type: ignore
@@ -228,8 +222,11 @@ class CEMRLReplayBuffer(DictReplayBuffer):
     ):
         """Return the context to be used for the encoder."""
         normal_samples_mask = indices < self.buffer_size
+        # flip arange and subtract from start
         indices = indices[:, None] - self.n_envs * np.flip(np.arange(encoder_window))[None]
+        # take care of normal buffer overflow
         indices[normal_samples_mask] = indices[normal_samples_mask] % self.buffer_size
+        # take care of exploration buffer overflow
         indices[~normal_samples_mask] = (
             indices[~normal_samples_mask] - self.buffer_size
         ) % self.explore_buffer_size + self.buffer_size
@@ -287,7 +284,7 @@ class CEMRLReplayBuffer(DictReplayBuffer):
             actions=self.to_torch(self.actions[indices]),
             dones=self.to_torch(self.dones[indices] * (1 - self.timeouts[indices])),
             rewards=self.to_torch(self._normalize_reward(self.rewards[indices], env))[..., None],
-        )
+        ), self.goal_idxs[indices]
 
     def _select_decoder_target_indices(self, indices: np.ndarray, num_decoder_targets: int) -> np.ndarray:
         group_ids = self.goal_idxs[indices]

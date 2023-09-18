@@ -28,9 +28,9 @@ class CEMRL(StateAwareOffPolicyAlgorithm):
         buffer_size: int = 1_000_000, # 20000,
         learning_starts: int = 1000,
         batch_size: int = 256,
-        train_freq: Union[int, Tuple[int, str]] = (1, "step"),
-        encoder_grad_steps: int = 40,
-        policy_grad_steps: int = 10,
+        train_freq: Union[int, Tuple[int, str]] = 10,
+        encoder_grad_steps: int = 50,
+        policy_grad_steps: int = 20,
         action_noise: Optional[ActionNoise] = None,
         replay_buffer_class: Optional[Type[EpisodicReplayBuffer|CEMRLReplayBuffer|CemrlReplayBuffer]] = None,
         replay_buffer_kwargs: Optional[Dict[str, Any]] = None,
@@ -41,6 +41,7 @@ class CEMRL(StateAwareOffPolicyAlgorithm):
         device: Union[th.device, str] = "auto",
         monitor_wrapper: bool = True,
         seed: Optional[int] = None,
+        gradient_steps=10,
         _init_setup_model=True,
     ):
         super().__init__(
@@ -51,7 +52,7 @@ class CEMRL(StateAwareOffPolicyAlgorithm):
             learning_starts=learning_starts,
             batch_size=batch_size,
             train_freq=train_freq,
-            gradient_steps=1,
+            gradient_steps=gradient_steps,
             action_noise=action_noise,
             replay_buffer_class=replay_buffer_class or EpisodicReplayBuffer,
             replay_buffer_kwargs=replay_buffer_kwargs,
@@ -87,7 +88,6 @@ class CEMRL(StateAwareOffPolicyAlgorithm):
         result = super()._setup_learn(total_timesteps, callback, reset_num_timesteps, tb_log_name, progress_bar)
         self.policy.sub_policy_algorithm.replay_buffer = self.replay_buffer
         self.policy.sub_policy_algorithm.set_logger(self.logger)
-
         return result
 
     def train(self, gradient_steps: int, batch_size: int) -> None:
@@ -101,13 +101,14 @@ class CEMRL(StateAwareOffPolicyAlgorithm):
             gradient_steps (int): How often the training should be applied
             batch_size (int): Batch size used in the training
         """
-        for _ in range(self.encoder_grad_steps):
-            loss, metrics = train_encoder(self.policy.encoder, self.policy.decoder, *self.replay_buffer.cemrl_sample(batch_size, self.get_vec_normalize_env()), self.policy.optimizer)
+        for _ in range(gradient_steps):
+            for _ in range(self.encoder_grad_steps):
+                loss, metrics = train_encoder(self.policy.encoder, self.policy.decoder, *self.replay_buffer.cemrl_sample(batch_size, self.get_vec_normalize_env()), self.policy.optimizer)
 
-            for k,v in metrics.items():
-                self.logger.record_mean("reconstruction/"+k, v.item())
+                for k,v in metrics.items():
+                    self.logger.record_mean("reconstruction/"+k, v.item())
 
-        self.policy.sub_policy_algorithm.train(self.policy_grad_steps, batch_size)
+            self.policy.sub_policy_algorithm.train(self.policy_grad_steps, batch_size)
         self.dump_logs_if_neccessary()
 
     def _excluded_save_params(self) -> List[str]:

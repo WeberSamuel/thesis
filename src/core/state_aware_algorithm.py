@@ -142,7 +142,7 @@ class StateAwareOffPolicyAlgorithm(OffPolicyAlgorithm):
         return state_dicts, tensors
     
     def dump_logs_if_neccessary(self):
-        if self.num_timesteps // self.n_envs % self.log_interval == 0:
+        if (self.num_timesteps // self.n_envs) % max(1, self.log_interval // self.train_freq.frequency) == 0:
             self._dump_logs()
 
 

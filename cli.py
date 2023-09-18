@@ -89,12 +89,7 @@ def create_env(
 
     goal_sampler = getattr(kwargs["env"], "goal_sampler", None)
     if vec_env_class is not None:
-        if vec_env_class == DummyVecEnv:
-            env = DummyVecEnv([lambda: make_single_env(goal_sampler) for _ in range(n_envs)])
-        elif vec_env_class == SubprocVecEnv:
-            env = SubprocVecEnv([lambda: make_single_env(goal_sampler) for _ in range(n_envs)])
-        else:
-            raise NotImplementedError
+        env = vec_env_class([lambda: make_single_env(goal_sampler) for _ in range(n_envs)]) # type:ignore
     else:
         env = DummyVecEnv([lambda: make_single_env(goal_sampler)])
     return env

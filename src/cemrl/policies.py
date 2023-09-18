@@ -76,11 +76,16 @@ class CEMRLPolicy(StateAwarePolicy):
         deterministic: bool = False,
     ) -> th.Tensor:
         prev_observation: CEMRLObsTensorDict = self.state  # type: ignore
+        next_obs: CEMRLObsTensorDict = {}
+        for k, v in prev_observation.items():  # type:ignore
+            v: th.Tensor
+            next_obs[k] = v.clone()
+            next_obs[k][:, :-1] = v[:, 1:]
+            next_obs[k][:, -1] = observation[k]
 
         with th.no_grad():
             y, z, encoder_state = self.encoder(
-                self.encoder.from_obs_to_encoder_input(prev_observation, observation),
-                prev_observation["encoder_state"].transpose(1, 0),  # type: ignore
+                self.encoder.from_obs_to_encoder_input(prev_observation, next_obs)
             )
         policy_obs = CEMRLPolicyInput(
             observation=observation["observation"].to(self.sub_policy_algorithm.device),
@@ -89,16 +94,12 @@ class CEMRLPolicy(StateAwarePolicy):
 
         action = self.sub_policy_algorithm.policy._predict(policy_obs, deterministic)  # type: ignore
 
-        self.state = observation
-        self.state["encoder_state"] = encoder_state.transpose(1, 0)  # type: ignore
-
+        self.state = next_obs
         return action
 
     def _reset_states(self, size: int) -> Tuple[np.ndarray, ...]:
-        state = apply_function_to_type(
+        return apply_function_to_type(
             self.observation_space.sample(),
             np.ndarray,
-            lambda x: th.zeros((size, *x.shape), device=self.device),
+            lambda x: th.zeros((size, self.encoder_window, *x.shape), device=self.device),
         )
-        state["encoder_state"] = th.zeros((size, self.encoder.num_classes, self.encoder.encoder_state_dim), device=self.device)
-        return state

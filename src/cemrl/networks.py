@@ -36,7 +36,7 @@ class Encoder(th.nn.Module):
         action_dim: int,
         complexity: float,
         reward_dim=1,
-        preprocess_dim=64,
+        preprocess_dim=0,
     ) -> None:
         super().__init__()
         self.input_dim = 2 * obs_dim + action_dim + reward_dim
@@ -44,7 +44,13 @@ class Encoder(th.nn.Module):
         self.num_classes = num_classes
 
         self.encoder_state_dim = int(self.input_dim * complexity)
-        self.pre_process_input = th.nn.Linear(self.input_dim, preprocess_dim)
+        
+        if preprocess_dim == 0:
+            self.pre_process_input = th.nn.Identity()
+            preprocess_dim = self.input_dim
+        else:
+            self.pre_process_input = th.nn.Linear(self.input_dim, preprocess_dim)
+
         self.encoder = th.nn.GRU(
             input_size=preprocess_dim,
             hidden_size=self.encoder_state_dim,
@@ -101,15 +107,15 @@ class Encoder(th.nn.Module):
         return th.cat(
             [
                 encoder_context.observations["observation"],
-                encoder_context.next_observations["action"],
-                encoder_context.next_observations["reward"],
+                encoder_context.actions,
+                encoder_context.rewards,
                 encoder_context.next_observations["observation"],
             ],
             dim=-1,
         )
 
     def from_obs_to_encoder_input(self, previous_obs: CEMRLObsTensorDict, current_obs: CEMRLObsTensorDict):
-        return th.cat(
+        data = th.cat(
             [
                 previous_obs["observation"],
                 current_obs["action"],
@@ -117,6 +123,10 @@ class Encoder(th.nn.Module):
                 current_obs["observation"],
             ],
             dim=-1,
-        )[
-            :, None
-        ]  # add time dimension
+        )
+        if current_obs["reward"].dim() == 3:
+            return data
+        elif current_obs["reward"].dim() == 2:
+            return data[:, None]  # add time dimension
+        else:
+            raise ValueError("Unsupported dimension")
