@@ -284,7 +284,7 @@ class CEMRLReplayBuffer(DictReplayBuffer):
             actions=self.to_torch(self.actions[indices]),
             dones=self.to_torch(self.dones[indices] * (1 - self.timeouts[indices])),
             rewards=self.to_torch(self._normalize_reward(self.rewards[indices], env))[..., None],
-        ), self.goal_idxs[indices]
+        )
 
     def _select_decoder_target_indices(self, indices: np.ndarray, num_decoder_targets: int) -> np.ndarray:
         group_ids = self.goal_idxs[indices]

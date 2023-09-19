@@ -1,6 +1,6 @@
 import numpy as np
 from stable_baselines3.common.base_class import BaseAlgorithm
-from stable_baselines3.common.callbacks import BaseCallback, ConvertCallback
+from stable_baselines3.common.callbacks import BaseCallback, CallbackList, ConvertCallback
 from stable_baselines3.common.off_policy_algorithm import OffPolicyAlgorithm
 from stable_baselines3.common.on_policy_algorithm import OnPolicyAlgorithm
 from stable_baselines3.common.type_aliases import TrainFreq, TrainFrequencyUnit
@@ -8,6 +8,7 @@ from stable_baselines3.common.vec_env import VecEnv
 from src.envs.meta_env import MetaMixin
 
 from src.core.buffers import ReplayBuffer
+
 
 class MaybeNoTraining:
     """
@@ -90,20 +91,21 @@ class StoreExplorationToBufferCallback(BaseCallback):
         dones = self.locals["dones"]
         infos = self.locals["infos"]
         new_obs = self.locals["new_obs"]
-        assert new_obs is not None
 
-        for info in infos:
-            info["is_exploration"] = True
-
-        if isinstance(self.model, OffPolicyAlgorithm) and self.original_model.replay_buffer == self.model.replay_buffer:
-            return super()._on_step()
-        
-        with StateCopy(self.original_model, self.model): # type: ignore
+        with StateCopy(self.original_model, self.model):  # type: ignore
             assert self.original_model.replay_buffer is not None
             self.original_model._store_transition(
                 self.original_model.replay_buffer, buffer_actions, new_obs, rewards, dones, infos
             )
 
+        return super()._on_step()
+
+
+class TagExplorationDataCallback(BaseCallback):
+    def _on_step(self) -> bool:
+        infos = self.locals["infos"]
+        for info in infos:
+            info["is_exploration"] = True
         return super()._on_step()
 
 
@@ -122,7 +124,7 @@ class ExplorationCallback(BaseCallback):
         steps_per_rollout=2,
         pre_train_steps=200,
         train_on_rollout: bool = False,
-        exploration_log_interval = 8,
+        exploration_log_interval=8,
         use_model_buffer: bool = True,
         verbose: int = 0,
     ):
@@ -145,9 +147,13 @@ class ExplorationCallback(BaseCallback):
 
     def _init_callback(self) -> None:
         assert isinstance(self.model, OffPolicyAlgorithm)
-        
-        if self.use_model_buffer and self.model.replay_buffer is not None and isinstance(self.exploration_algorithm, OffPolicyAlgorithm):
-            self._store_callback = None
+
+        if (
+            self.use_model_buffer
+            and self.model.replay_buffer is not None
+            and isinstance(self.exploration_algorithm, OffPolicyAlgorithm)
+        ):
+            self._exploration_callback = TagExplorationDataCallback()
             explore_buffer = self.exploration_algorithm.replay_buffer
             if isinstance(explore_buffer, ReplayBuffer) and isinstance(self.model.replay_buffer, ReplayBuffer):
                 explore_buffer.storage = self.model.replay_buffer.storage
@@ -157,7 +163,9 @@ class ExplorationCallback(BaseCallback):
             else:
                 self.exploration_algorithm.replay_buffer = self.model.replay_buffer
         else:
-            self._store_callback = StoreExplorationToBufferCallback(self.model)
+            self._exploration_callback = CallbackList(
+                [TagExplorationDataCallback(), StoreExplorationToBufferCallback(self.model)]
+            )
 
         # copy goal sampler
         assert self.model.env is not None and self.exploration_algorithm.env is not None
@@ -175,7 +183,7 @@ class ExplorationCallback(BaseCallback):
     def _on_training_start(self) -> None:
         self.exploration_algorithm.learn(
             self.pre_train_steps,
-            self._store_callback,
+            self._exploration_callback,
             log_interval=self.exploration_log_interval,
             tb_log_name="exploration",
             reset_num_timesteps=False,
@@ -191,7 +199,7 @@ class ExplorationCallback(BaseCallback):
         with MaybeNoTraining(not self.train_on_rollout, self.exploration_algorithm):
             self.exploration_algorithm.learn(
                 self.steps_per_rollout,
-                self._store_callback,
+                self._exploration_callback,
                 log_interval=self.exploration_log_interval,
                 tb_log_name="exploration",
                 reset_num_timesteps=False,

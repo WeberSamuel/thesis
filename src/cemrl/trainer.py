@@ -24,10 +24,10 @@ def train_encoder(
     num_classes = y_distribution.probs.shape[-1] # type: ignore
 
     # calculate component losses
-    kl_qz_pz = th.empty(batch_size, num_classes, device=device)
-    state_losses = th.empty(batch_size, num_classes, device=device)
-    reward_losses = th.empty(batch_size, num_classes, device=device)
-    nll_px = th.empty(batch_size, num_classes, device=device)
+    kl_qz_pz = th.zeros(batch_size, num_classes, device=device)
+    state_losses = th.zeros(batch_size, num_classes, device=device)
+    reward_losses = th.zeros(batch_size, num_classes, device=device)
+    nll_px = th.zeros(batch_size, num_classes, device=device)
 
     for y in range(num_classes):
         _, z = encoder.sample(y_distribution, z_distributions, y_int=y) # type: ignore
