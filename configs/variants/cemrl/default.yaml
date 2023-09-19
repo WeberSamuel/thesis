@@ -1,6 +1,6 @@
 main:
   algorithm: src.cemrl.cemrl.CEMRL
-  replay_buffer: src.cemrl.buffers2.CemrlReplayBuffer
+  replay_buffer: src.cemrl.buffers.CEMRLReplayBuffer
   policy: src.cemrl.policies.CEMRLPolicy
   optimizer:
     class_path: torch.optim.AdamW
