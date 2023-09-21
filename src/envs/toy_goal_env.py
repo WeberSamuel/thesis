@@ -1,16 +1,18 @@
 """Code for the ToyGoal environment used in the Thesis."""
 from enum import Enum
-import cv2
-from gymnasium import Env, spaces
-import numpy as np
 from typing import Any, Optional, SupportsFloat
-from src.envs.samplers.base_sampler import BaseSampler
-from src.envs.meta_env import MetaMixin
+
+import cv2
+import numpy as np
+from gymnasium import Env, spaces
+
+from ..core.envs import BaseSampler, MetaMixin
 
 class ToyGoalMetaClasses(Enum):
     REACH = 0
     FLEE = 1
     DONT_MOVE = 2
+
 
 class ToyGoalEnv(MetaMixin, Env[np.ndarray, np.ndarray]):
     """Simple 2D toy goal environment, where the agent has to reach a goal position.
@@ -164,6 +166,7 @@ class ToyGoalEnv(MetaMixin, Env[np.ndarray, np.ndarray]):
             img = cv2.circle(img, (int(x_goal), int(y_goal)), 5, (255, 0, 255))
 
         return img
+
 
 class ToyGoal1DEnv(ToyGoalEnv):
     def step(self, action: np.ndarray):

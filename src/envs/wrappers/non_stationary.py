@@ -1,8 +1,11 @@
 from enum import Enum
 from typing import Any, List, Optional, SupportsFloat
-from gymnasium import Env, Wrapper, spaces
+
 import numpy as np
-from src.envs.meta_env import MetaMixin
+from gymnasium import Env, Wrapper, spaces
+
+from ...core.envs import MetaMixin
+
 
 class ChangeModes(Enum):
     AFTER_TIMESTEP = 1
@@ -12,6 +15,7 @@ class ChangeModes(Enum):
     AFTER_LOCATION_WITH_PROBABILITY = 5
     AFTER_LOCATION_AND_TIMESTEP = 6
     AFTER_LOCATION_AND_TIMESTEP_WITH_PROBABILITY = 7
+
 
 class NonStationaryWrapper(Wrapper):
     def __init__(
@@ -33,9 +37,11 @@ class NonStationaryWrapper(Wrapper):
             (True, False, True): ChangeModes.AFTER_LOCATION_AND_TIMESTEP,
             (True, True, False): ChangeModes.AFTER_TIMESTEP_WITH_PROBABILITY,
             (True, True, True): ChangeModes.AFTER_LOCATION_AND_TIMESTEP_WITH_PROBABILITY,
-        }[(change_after_timestep is not None, change_probability is not None, change_after_location is not None)] # type: ignore
+        }[
+            (change_after_timestep is not None, change_probability is not None, change_after_location is not None)
+        ]  # type: ignore
 
-        self.unwrapped: MetaMixin # type: ignore
+        self.unwrapped: MetaMixin  # type: ignore
 
         if self.mode == ChangeModes.PROBABILITY:
             self.change_probability = 0.0 if change_probability is None else change_probability

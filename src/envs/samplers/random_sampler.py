@@ -1,6 +1,7 @@
 import numpy as np
 from gymnasium import spaces
-from src.envs.samplers.base_sampler import BaseSampler
+
+from ...core.envs import BaseSampler
 
 
 class RandomSampler(BaseSampler):

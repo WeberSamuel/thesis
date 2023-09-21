@@ -1,7 +1,9 @@
 from typing import Tuple
-import numpy as np
+
 import gymnasium.spaces as spaces
-from src.envs.samplers.base_sampler import BaseSampler
+import numpy as np
+
+from ...core.envs import BaseSampler
 
 
 class UniformCircleSampler(BaseSampler):

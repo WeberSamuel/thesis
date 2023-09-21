@@ -7,7 +7,7 @@ from gymnasium import spaces
 from stable_baselines3.common.type_aliases import Schedule
 
 from src.cemrl.networks import Encoder as CEMRLEncoder
-from src.core.state_aware_algorithm import StateAwarePolicy
+from thesis.core.policy import BasePolicy
 from src.p2e.decoder import Decoder
 from src.p2e.encoder import Encoder
 from src.p2e.networks import (
@@ -29,7 +29,7 @@ from src.p2e.networks import (
 from src.p2e.utils import asdict
 
 
-class P2EPolicy(StateAwarePolicy):
+class P2EPolicy(BasePolicy):
     def __init__(
         self,
         observation_space: spaces.Space,

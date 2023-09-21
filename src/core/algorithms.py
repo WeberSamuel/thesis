@@ -1,20 +1,15 @@
 from typing import Any, Dict, Optional, Tuple
 
 import numpy as np
-from stable_baselines3.common.buffers import ReplayBuffer
-from stable_baselines3.common.vec_env import VecEnv
 import torch as th
 from gymnasium import spaces
 from stable_baselines3.common.callbacks import BaseCallback, CallbackList
 from stable_baselines3.common.noise import ActionNoise
 from stable_baselines3.common.off_policy_algorithm import OffPolicyAlgorithm
-from stable_baselines3.common.type_aliases import GymEnv, MaybeCallback, RolloutReturn, Schedule, TrainFreq
+from stable_baselines3.common.type_aliases import GymEnv, MaybeCallback, Schedule
 
-from thesis.core.buffer import ReplayBuffer
-from thesis.core.policy import BasePolicy
-
-from .buffer import ReplayBuffer
-from .policy import BasePolicy
+from .buffers import ReplayBuffer
+from .policies import BasePolicy
 
 
 class BaseAlgorithm(OffPolicyAlgorithm):
@@ -25,7 +20,7 @@ class BaseAlgorithm(OffPolicyAlgorithm):
         self,
         policy: str | type[BasePolicy],
         env: GymEnv | str,
-        learning_rate: float | Schedule = 1e-3,
+        learning_rate: float | Schedule,
         buffer_size: int = 1000000,
         learning_starts: int = 100,
         batch_size: int = 256,
@@ -44,11 +39,6 @@ class BaseAlgorithm(OffPolicyAlgorithm):
         device: th.device | str = "auto",
         monitor_wrapper: bool = True,
         seed: int | None = None,
-        sub_algorithm: type[OffPolicyAlgorithm] | None = None,
-        sub_algorithm_kwargs: Dict[str, Any] | None = None,
-        explore_algorithm: type[OffPolicyAlgorithm] | None = None,
-        explore_algorithm_kwargs: Dict[str, Any] | None = None,
-        parent_algorithm: OffPolicyAlgorithm | None = None,
         _init_setup_model: bool = True,
     ):
         super().__init__(

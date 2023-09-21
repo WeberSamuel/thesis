@@ -1,10 +1,12 @@
 import os
+
 import numpy as np
 import torch as th
 from stable_baselines3.common.callbacks import BaseCallback, EvalCallback
 from stable_baselines3.common.evaluation import evaluate_policy
-from stable_baselines3.common.vec_env import VecVideoRecorder
 from stable_baselines3.common.logger import Video
+from stable_baselines3.common.vec_env import VecVideoRecorder
+
 
 class RecordVideo(BaseCallback):
     def __init__(self, save_path: str, verbose: int = 0):

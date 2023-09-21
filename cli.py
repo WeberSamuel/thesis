@@ -14,8 +14,8 @@ from stable_baselines3.common.policies import BasePolicy
 from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
 from stable_baselines3.common.vec_env import VecEnv, DummyVecEnv, SubprocVecEnv
 import wandb
-from src.cemrl.wrappers.cemrl_wrapper_1 import CEMRLWrapper
-from src.envs.meta_env import MetaMixin
+from src.cemrl.wrappers.cemrl_wrapper import CEMRLWrapper
+from src.core.envs import MetaMixin
 from src.envs.wrappers.heatmap import HeatmapWrapper
 from src.envs.wrappers.non_stationary import NonStationaryWrapper
 from src.envs.wrappers.success import SuccessWrapper
@@ -188,7 +188,6 @@ def add_base_algorithm(
             key + "replay_buffer.init_args", key + "algorithm.init_args.replay_buffer_kwargs", compute_fn=lambda x: vars(x)
         )
 
-
 if __name__ == "__main__":
     parser = ArgumentParser(parser_mode="omegaconf")
     parser.add_argument("--config", action=ActionConfigFile, help="Path to a configuration file in json or yaml format.")
@@ -218,7 +217,7 @@ if __name__ == "__main__":
     )
 
     # Argument registration and linking for algorithms
-    add_base_algorithm(parser, "main", directly_use_policy=True)
+    add_base_algorithm(parser, "main", directly_use_policy=False)
 
     add_base_algorithm(parser, "exploration")
     parser.link_arguments("main.policy.encoder", "exploration.policy.init_args.encoder", apply_on="instantiate")
@@ -270,6 +269,8 @@ if __name__ == "__main__":
         compute_fn=lambda train, exploration, eval, exploration_eval: locals(),
         apply_on="instantiate",
     )
+
+    parser.link_arguments("main.algorithm", "exploration.algorithm.init_args.main_algorithm", apply_on="instantiate")
 
     parser.add_argument("subcommand", choices=["train", "train-exploration", "eval"])
     parser.add_argument("--wandb", type=bool, default=True)

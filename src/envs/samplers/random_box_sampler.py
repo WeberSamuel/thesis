@@ -1,7 +1,10 @@
 from typing import Tuple
-import numpy as np
-from src.envs.samplers.base_sampler import BaseSampler
+
 import gymnasium.spaces as spaces
+import numpy as np
+
+from ...core.envs import BaseSampler
+
 
 class RandomBoxSampler(BaseSampler):
     def __init__(self, available_tasks=[0], num_goals=100) -> None:

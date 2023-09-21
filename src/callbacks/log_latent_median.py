@@ -4,7 +4,6 @@ import torch as th
 from stable_baselines3.common.callbacks import BaseCallback
 
 from src.cemrl.policies import CEMRLPolicy
-from src.cemrl.types import CEMRLObsTensorDict
 
 class LogLatentMedian(BaseCallback):
     def __init__(self, verbose: int = 0):

@@ -3,18 +3,18 @@ from gymnasium import spaces
 import numpy as np
 import torch as th
 from gymnasium import Env
-from src.core.state_aware_algorithm import StateAwarePolicy
+from ..core.policies import BasePolicy
 from stable_baselines3.common.off_policy_algorithm import OffPolicyAlgorithm
 from stable_baselines3.common.vec_env import VecEnv
-from src.envs.samplers.base_sampler import BaseSampler
-from src.cemrl.types import CEMRLObsTensorDict, CEMRLPolicyInput
-from src.cemrl.wrappers.cemrl_policy_wrapper import CEMRLPolicyVecWrapper, CEMRLPolicyWrapper
-from src.plan2explore.networks import Ensemble, WorldModel
-from src.cemrl.networks import Decoder, Encoder
-from src.utils import apply_function_to_type
+from ..core.envs import BaseSampler
+from ..cemrl.types import CEMRLObsTensorDict, CEMRLPolicyInput
+from ..cemrl.wrappers.cemrl_policy_wrapper import CEMRLPolicyVecWrapper, CEMRLPolicyWrapper
+from ..plan2explore.networks import Ensemble, WorldModel
+from ..cemrl.networks import Decoder, Encoder
+from ..utils import apply_function_to_type
 
 
-class CEMRLPolicy(StateAwarePolicy):
+class CEMRLPolicy(BasePolicy):
     def __init__(
         self,
         *args,

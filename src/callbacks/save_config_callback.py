@@ -1,6 +1,6 @@
 import os
-import numpy as np
 
+import numpy as np
 import torch as th
 from git.repo import Repo
 from jsonargparse import ArgumentParser, Namespace

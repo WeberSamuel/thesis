@@ -1,7 +1,9 @@
 from typing import Any, Dict, SupportsFloat
+
 import numpy as np
-from gymnasium import spaces, Wrapper, Env
-from src.envs.meta_env import MetaMixin
+from gymnasium import Env, Wrapper, spaces
+
+from ...core.envs import MetaMixin
 
 
 class IncludeGoalWrapper(Wrapper):
@@ -10,7 +12,7 @@ class IncludeGoalWrapper(Wrapper):
         self.observation_space = self._get_obs_space()
 
         assert isinstance(self.unwrapped, MetaMixin)
-        self.unwrapped: MetaMixin # type: ignore
+        self.unwrapped: MetaMixin  # type: ignore
 
     def step(self, action: Any) -> tuple[Any, SupportsFloat, bool, bool, dict[str, Any]]:
         obs, reward, terminated, truncated, info = super().step(action)

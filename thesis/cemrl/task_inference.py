@@ -7,6 +7,7 @@ from torch.distributions import Categorical, Normal, kl
 from ..core.module import BaseModule
 from ..core.utils import build_network
 from .config import DecoderConfig, EncoderConfig, TaskInferenceConfig
+from ..core.types import EncoderInput
 
 REWARD_DIM = 1
 
@@ -36,14 +37,6 @@ class StatePreprocessor(th.nn.Module):
 
     def forward(self, m):
         return self.layers(m)
-
-
-class EncoderInput(NamedTuple):
-    obs: th.Tensor
-    action: th.Tensor
-    next_obs: th.Tensor
-    reward: th.Tensor
-
 
 class Encoder(BaseModule):
     def __init__(self, state_size: int, action_size: int, config: EncoderConfig):

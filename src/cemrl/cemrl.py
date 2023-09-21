@@ -8,16 +8,16 @@ from stable_baselines3.common.noise import ActionNoise
 from stable_baselines3.common.off_policy_algorithm import OffPolicyAlgorithm
 from stable_baselines3.common.type_aliases import GymEnv, MaybeCallback, Schedule
 from src.cemrl.trainer import train_encoder
-from src.cemrl.buffers2 import CemrlReplayBuffer
-from src.cemrl.buffers1 import EpisodicReplayBuffer
 from src.cemrl.buffers import CEMRLReplayBuffer
 from src.cemrl.policies import CEMRLPolicy
 from src.cli import DummyPolicy
-from src.core.state_aware_algorithm import StateAwareOffPolicyAlgorithm
+from ..core.algorithms import BaseAlgorithm
 
 
-class CEMRL(StateAwareOffPolicyAlgorithm):
+class CEMRL(BaseAlgorithm):
     """CEMRL algorithm."""
+
+    
 
     def __init__(
         self,
@@ -25,10 +25,10 @@ class CEMRL(StateAwareOffPolicyAlgorithm):
         env: Union[GymEnv, str],
         decoder_samples: int = 400,
         learning_rate: Union[float, Schedule] = 1e-3,
-        buffer_size: int = 1_000_000, # 20000,
+        buffer_size: int = 2_000_000, # 20000,
         learning_starts: int = 1000,
         batch_size: int = 256,
-        train_freq: Union[int, Tuple[int, str]] = 10,
+        train_freq: Union[int, Tuple[int, str]] = 1,
         encoder_grad_steps: int = 50,
         policy_grad_steps: int = 20,
         action_noise: Optional[ActionNoise] = None,
@@ -41,11 +41,11 @@ class CEMRL(StateAwareOffPolicyAlgorithm):
         device: Union[th.device, str] = "auto",
         monitor_wrapper: bool = True,
         seed: Optional[int] = None,
-        gradient_steps=10,
+        gradient_steps=1,
         _init_setup_model=True,
     ):
         super().__init__(
-            DummyPolicy,
+            type(policy),
             env=env,
             learning_rate=learning_rate,
             buffer_size=buffer_size,
@@ -54,7 +54,7 @@ class CEMRL(StateAwareOffPolicyAlgorithm):
             train_freq=train_freq,
             gradient_steps=gradient_steps,
             action_noise=action_noise,
-            replay_buffer_class=replay_buffer_class or EpisodicReplayBuffer,
+            replay_buffer_class=replay_buffer_class or CEMRLReplayBuffer,
             replay_buffer_kwargs=replay_buffer_kwargs,
             optimize_memory_usage=optimize_memory_usage,
             stats_window_size=stats_window_size,
@@ -63,8 +63,6 @@ class CEMRL(StateAwareOffPolicyAlgorithm):
             device=device,
             monitor_wrapper=monitor_wrapper,
             seed=seed,
-            support_multi_env=True,
-            sde_support=False,
         )
         self.decoder_samples = decoder_samples
         self.encoder_grad_steps = encoder_grad_steps
@@ -75,7 +73,7 @@ class CEMRL(StateAwareOffPolicyAlgorithm):
             self._setup_model()
         self.policy: CEMRLPolicy = policy.to(self.device)
         self.policy.sub_policy_algorithm.replay_buffer = self.replay_buffer
-        self.replay_buffer: EpisodicReplayBuffer|CEMRLReplayBuffer|CemrlReplayBuffer
+        self.replay_buffer: CEMRLReplayBuffer
 
     def _setup_learn(
         self,

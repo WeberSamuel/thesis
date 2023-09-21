@@ -1,5 +1,6 @@
 from typing import Any, SupportsFloat
-from gymnasium import Wrapper, Env
+
+from gymnasium import Env, Wrapper
 
 
 class SuccessWrapper(Wrapper):
@@ -29,7 +30,7 @@ class PercentageSuccessWrapper(SuccessWrapper):
     def is_success(self) -> bool:
         if self.episode_window > 1.0:
             last_steps = int(self.episode_window)
-        else: 
+        else:
             last_steps = max(int(len(self.success_buffer) * self.episode_window), 1)
-            
+
         return sum(self.success_buffer[-last_steps:]) / last_steps >= self.success_threshold

@@ -1,4 +1,4 @@
-from core.state_aware_algorithm import StateAwareOffPolicyAlgorithm
+from from ..core.algorithms import BaseAlgorithm
 from src.meta_dreamer.policy import MetaDreamerPolicy
 
 class MetaDreamer(StateAwareOffPolicyAlgorithm):
@@ -6,5 +6,6 @@ class MetaDreamer(StateAwareOffPolicyAlgorithm):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
+
     def train(self, gradient_steps: int, batch_size: int) -> None:
-        self.policy
+        pass

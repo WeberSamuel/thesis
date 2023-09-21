@@ -3,7 +3,7 @@ from typing import Literal
 import numpy as np
 import torch as th
 from gymnasium import spaces
-from scipy.stats import binned_statistic
+from scipy.stats import binned_statistic, binned_statistic_dd
 from stable_baselines3.common.type_aliases import DictReplayBufferSamples
 from stable_baselines3.common.vec_env import VecNormalize
 
@@ -42,6 +42,15 @@ class CemrlStorage(Storage):
 
         self.goal_ep_length[goals, episode_idxs] += 1
         super().add(episode_idxs, data, infos)
+    
+    def invariant(self):
+        for goal_idx in np.unique(self.next_observations["goal_idx"]):
+            if goal_idx == 0:
+                continue
+            samples = np.where(self.next_observations["goal_idx"][..., 0] == goal_idx)
+            if not np.all(self.next_observations["goal"][samples] == self.next_observations["goal"][samples][0:1]):
+                return False
+        return True
 
 
 class CemrlReplayBuffer(ReplayBuffer):
@@ -59,6 +68,8 @@ class CemrlReplayBuffer(ReplayBuffer):
         device: th.device | str = "auto",
         n_envs: int = 1,
         decoder_context_mode: Literal["random", "sequential"] = "random",
+        random_normalization: Literal["none", "reward", "observation"] = "observation",
+        random_normalization_mode: Literal["uniform", "skewed"] = "skewed",
         optimize_memory_usage: bool = False,
         encoder_context_length: int = 30,
     ):
@@ -76,6 +87,8 @@ class CemrlReplayBuffer(ReplayBuffer):
         )
         self.decoder_context_mode = decoder_context_mode
         self.encoder_context_length = encoder_context_length
+        self.random_normalization = random_normalization
+        self.random_normalization_mode = random_normalization_mode
 
     def sample(self, batch_size: int, env: VecNormalize | None = None):
         if self.task_inference is None:
@@ -117,23 +130,24 @@ class CemrlReplayBuffer(ReplayBuffer):
         decoder_targets = self.get_decoder_targets(episode_idxs, sample_idxs, decoder_context_length, env)
         return encoder_context, decoder_targets
 
-    def get_sample_idxs(self, batch_size, limit_to_goals_if_weighted=None):
-        if self.decoder_context_mode == "random":
-            if limit_to_goals_if_weighted is None:
-                limit_to_goals_if_weighted = np.arange(self.storage.num_goals)
-            goal_lengths = self.storage.goal_ep_length[limit_to_goals_if_weighted].sum(axis=1)
-            available_goals = np.where(goal_lengths > 0)[0]
-            goals = np.random.choice(available_goals, size=batch_size, replace=True)
-            samples = []
-            for goal, length in zip(limit_to_goals_if_weighted[goals], goal_lengths[goals]):
-                samples.append(np.random.choice(length, 1, p=self.goal_to_sample_weights[goal, :length]))
-            samples = np.concatenate(samples, axis=0)
-            samples = self.goal_idx_to_episode_sample_indices[limit_to_goals_if_weighted[goals], samples]
-            episode_idxs = samples[..., 0]
-            sample_idxs = samples[..., 1]
-        else:
-            episode_idxs = np.random.choice(self.valid_episodes, size=batch_size)
-            sample_idxs = np.random.randint(0, self.storage.episode_lengths[episode_idxs], size=batch_size)
+    def get_sample_idxs(self, batch_size):
+        # if self.decoder_context_mode == "random":
+        #     limit_to_goals_if_weighted = np.arange(self.storage.num_goals)
+        #     goal_lengths = self.storage.goal_ep_length[limit_to_goals_if_weighted].sum(axis=1)
+        #     available_goals = np.where(goal_lengths > 0)[0]
+        #     goals = np.random.choice(available_goals, size=batch_size, replace=True)
+        #     samples = []
+        #     for goal, length in zip(limit_to_goals_if_weighted[goals], goal_lengths[goals]):
+        #         samples.append(np.random.choice(length, 1, p=self.goal_to_sample_weights[goal, :length]))
+        #     samples = np.concatenate(samples, axis=0)
+        #     samples = self.goal_idx_to_episode_sample_indices[limit_to_goals_if_weighted[goals], samples]
+        #     episode_idxs = samples[..., 0]
+        #     sample_idxs = samples[..., 1]
+        # else:
+        ep_lengths = self.storage.episode_lengths[self.valid_episodes]
+        ep_lengths = ep_lengths / ep_lengths.sum()
+        episode_idxs = np.random.choice(self.valid_episodes, size=batch_size, p=ep_lengths)
+        sample_idxs = np.random.randint(0, self.storage.episode_lengths[episode_idxs], size=batch_size)
         return episode_idxs, sample_idxs
 
     def get_decoder_targets(
@@ -204,11 +218,29 @@ class CemrlReplayBuffer(ReplayBuffer):
                     offset += self.storage.goal_ep_length[goal_idx, ep_idx]
 
             self.goal_to_sample_weights = np.zeros((self.storage.num_goals, max_goal_ep_lenght), dtype=np.float32)
+
             for goal_idx in np.where(goal_length > 0)[0]:
-                rewards = self.storage.rewards[
-                    self.goal_idx_to_episode_sample_indices[goal_idx, : goal_length[goal_idx], 0],
-                    self.goal_idx_to_episode_sample_indices[goal_idx, : goal_length[goal_idx], 1],
-                ]
-                count, _, bin = binned_statistic(rewards, rewards, statistic="count")
-                prob = 1 / count[bin - 1]
-                self.goal_to_sample_weights[goal_idx, : goal_length[goal_idx]] = prob / prob.sum()
+                if self.random_normalization == "none":
+                    self.goal_to_sample_weights[goal_idx, : goal_length[goal_idx]] = 1 / goal_length[goal_idx]
+                elif self.random_normalization == "reward":
+                    rewards = self.storage.rewards[
+                        self.goal_idx_to_episode_sample_indices[goal_idx, : goal_length[goal_idx], 0],
+                        self.goal_idx_to_episode_sample_indices[goal_idx, : goal_length[goal_idx], 1],
+                    ]
+                    count, _, bin = binned_statistic(rewards, rewards, statistic="count")
+                    sample_count = count[bin - 1]
+                elif self.random_normalization == "observation":
+                    obs = self.storage.observations["observation"][
+                        self.goal_idx_to_episode_sample_indices[goal_idx, : goal_length[goal_idx], 0],
+                        self.goal_idx_to_episode_sample_indices[goal_idx, : goal_length[goal_idx], 1],
+                    ]
+                    count, _, bin = binned_statistic_dd(obs, obs[:, 0], statistic="count", expand_binnumbers=True)
+                    sample_count = count[tuple(zip(bin-1))]
+                else:
+                    raise ValueError(f"Unknown random_normalization: {self.random_normalization}")
+                
+                if self.random_normalization_mode == "uniform":
+                    self.goal_to_sample_weights[goal_idx, : goal_length[goal_idx]] = 1 / sample_count / np.count_nonzero(count)
+                elif self.random_normalization_mode == "skewed":
+                    prob = count.max() / sample_count
+                    self.goal_to_sample_weights[goal_idx, : goal_length[goal_idx]] = prob / prob.sum()

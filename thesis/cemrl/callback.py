@@ -2,7 +2,7 @@ from gymnasium import spaces
 
 from thesis.cemrl.task_inference import EncoderInput
 from .buffer import CemrlReplayBuffer
-from .cemrl import Cemrl
+from .algorithm import Cemrl
 from ..core.callback import ExplorationCallback
 from ..core.utils import build_network
 import torch as th

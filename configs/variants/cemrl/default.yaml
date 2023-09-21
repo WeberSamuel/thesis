@@ -1,17 +1,10 @@
 main:
-  algorithm: src.cemrl.cemrl.CEMRL
-  replay_buffer: src.cemrl.buffers.CEMRLReplayBuffer
-  policy: src.cemrl.policies.CEMRLPolicy
-  optimizer:
-    class_path: torch.optim.AdamW
-    init_args:
-      lr: 1e-3
+  algorithm: thesis.cemrl.algorithm.Cemrl
+  replay_buffer: thesis.core.buffer.ReplayBuffer
+  policy: thesis.cemrl.policy.CemrlPolicy
 sub_algorithm: 
-  algorithm: 
-    class_path: stable_baselines3.sac.SAC
-    init_args:
-      learning_rate: 1e-3
-  policy: stable_baselines3.sac.policies.MultiInputPolicy
+  algorithm: null
+  policy: null
 exploration:
   algorithm: null
   policy: null

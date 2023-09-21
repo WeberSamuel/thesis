@@ -14,7 +14,7 @@ from stable_baselines3.common.type_aliases import GymEnv, MaybeCallback, ReplayB
 from stable_baselines3.common.vec_env import VecEnv
 from torch.distributions import Bernoulli, Distribution, Normal
 
-from src.core.state_aware_algorithm import StateAwareOffPolicyAlgorithm
+from from ..core.algorithms import BaseAlgorithm
 from src.p2e.networks import Actor, Critic
 from src.p2e.policies import P2EPolicy
 from src.p2e.utils import compute_lambda_values, create_normal_dist

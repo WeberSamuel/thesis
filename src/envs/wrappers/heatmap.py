@@ -1,7 +1,8 @@
 from typing import List, Tuple
+
 import numpy as np
 from gymnasium import Env, ObservationWrapper, spaces
-from gymnasium.spaces.utils import flatten_space, flatten
+from gymnasium.spaces.utils import flatten, flatten_space
 
 
 class HeatmapWrapper(ObservationWrapper):
@@ -9,10 +10,10 @@ class HeatmapWrapper(ObservationWrapper):
         super().__init__(env)
         self.idxs2d = idxs_2d
         self.cooling_factor = cooling_factor
-        
+
         space = flatten_space(self.observation_space)
         assert isinstance(space, spaces.Box)
-        
+
         self.heatmap_idxs = np.where(~(np.isinf(space.low) | np.isinf(space.high)))[0]
         if len(self.heatmap_idxs) == 0:
             self.heatmap_linspaces = np.zeros((0, 0))

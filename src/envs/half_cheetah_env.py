@@ -1,10 +1,11 @@
 from enum import Enum
-from gymnasium.envs.mujoco.half_cheetah_v4 import HalfCheetahEnv as GymHalfCheetahEnv
-import numpy as np
-from gymnasium.spaces import Box
-from src.envs.samplers.base_sampler import BaseSampler
-from src.envs.meta_env import MetaMixin
+
 import cv2
+import numpy as np
+from gymnasium.envs.mujoco.half_cheetah_v4 import HalfCheetahEnv as GymHalfCheetahEnv
+from gymnasium.spaces import Box
+
+from ..core.envs import BaseSampler, MetaMixin
 
 
 class HalfCheetahMetaClasses(Enum):
@@ -14,10 +15,14 @@ class HalfCheetahMetaClasses(Enum):
 
 
 class HalfCheetahEnv(MetaMixin, GymHalfCheetahEnv):
-    def __init__(self, goal_sampler: BaseSampler, *args, width: int = 256, height: int = 256, success_threshold:float = 2, **kwargs) -> None:
-        super().__init__(goal_sampler, width=width, height=height, exclude_current_positions_from_observation=False, *args, **kwargs)
+    def __init__(
+        self, goal_sampler: BaseSampler, *args, width: int = 256, height: int = 256, success_threshold: float = 2, **kwargs
+    ) -> None:
+        super().__init__(
+            goal_sampler, width=width, height=height, exclude_current_positions_from_observation=False, *args, **kwargs
+        )
         self.success_threshold = success_threshold
-        self.observation_space = Box(low=-np.inf, high=np.inf, shape=self.observation_space.shape, dtype=np.float32) # type: ignore
+        self.observation_space = Box(low=-np.inf, high=np.inf, shape=self.observation_space.shape, dtype=np.float32)  # type: ignore
 
     def step(self, action):
         obs, reward, terminated, truncated, info = super().step(action)

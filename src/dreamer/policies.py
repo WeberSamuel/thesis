@@ -5,10 +5,10 @@ from gymnasium import spaces
 from stable_baselines3.common.type_aliases import Schedule
 from submodules.dreamer.dreamer import Dreamer as ExternalDreamer
 
-from src.core.state_aware_algorithm import StateAwarePolicy
+from ..core.policies import BasePolicy
 from src.dreamer.config import DecoderConfig, DreamerConfig, EncoderConfig
 
-class DreamerPolicy(StateAwarePolicy):
+class DreamerPolicy(BasePolicy):
     state: dict[str, th.Tensor]
 
     def __init__(

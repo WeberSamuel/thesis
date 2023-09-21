@@ -7,7 +7,7 @@ from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.logger import Image
 from stable_baselines3.common.vec_env import VecEnv
 
-from src.envs.wrappers.heatmap import HeatmapWrapper
+from ..envs.wrappers.heatmap import HeatmapWrapper
 
 
 class SaveHeatmapCallback(BaseCallback):

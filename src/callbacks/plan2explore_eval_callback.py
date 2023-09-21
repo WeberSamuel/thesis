@@ -1,5 +1,5 @@
 import os
-from typing import Any, Dict, Optional, Union
+from typing import Optional, Union
 
 import numpy as np
 from gymnasium import Env
@@ -9,7 +9,7 @@ from stable_baselines3.common.evaluation import evaluate_policy
 from stable_baselines3.common.vec_env import VecEnv, sync_envs_normalization
 
 from .eval_in_log_folder_callback import EvalInLogFolderCallback
-from src.plan2explore.policies import Plan2ExplorePolicy
+from ..plan2explore.policies import Plan2ExplorePolicy
 
 
 class Plan2ExploreEvalCallback(EvalInLogFolderCallback):

@@ -7,10 +7,9 @@ from stable_baselines3.common.base_class import BaseAlgorithm
 from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.evaluation import evaluate_policy
 from stable_baselines3.common.vec_env import VecEnv, sync_envs_normalization
-from src.dreamer.policies import DreamerPolicy
 
-from src.p2e.policies import P2EPolicy
-
+from ..dreamer.policies import DreamerPolicy
+from ..p2e.policies import P2EPolicy
 from .eval_in_log_folder_callback import EvalInLogFolderCallback
 
 

@@ -5,7 +5,7 @@ from stable_baselines3.common.off_policy_algorithm import OffPolicyAlgorithm
 from stable_baselines3.common.on_policy_algorithm import OnPolicyAlgorithm
 from stable_baselines3.common.type_aliases import TrainFreq, TrainFrequencyUnit
 from stable_baselines3.common.vec_env import VecEnv
-from src.envs.meta_env import MetaMixin
+from ..core.envs import MetaMixin
 
 from src.core.buffers import ReplayBuffer
 

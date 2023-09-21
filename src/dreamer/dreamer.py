@@ -2,7 +2,7 @@ import numpy as np
 
 from src.dreamer.buffers import DreamerReplayBuffer
 from src.dreamer.policies import DreamerPolicy
-from src.core.state_aware_algorithm import StateAwareOffPolicyAlgorithm
+from from ..core.algorithms import BaseAlgorithm
 
 
 class Dreamer(StateAwareOffPolicyAlgorithm):

@@ -46,7 +46,10 @@ class EvalInLogFolderCallback(EvalCallback):
         
         if is_going_to_evaluate:
             frames = np.array(self.video_env.recorded_frames).transpose(0, -1, 1, 2)
-            wandb.log({self.log_prefix: wandb.Video(frames, fps=30)})
+            try:
+                wandb.log({self.log_prefix: wandb.Video(frames, fps=30)})
+            except :
+                print("Failed to log video")
             self.video_env.close()
             self.logger.record(f"{self.log_prefix}/success_reward", self.success_reward / self.total_count)
         return result

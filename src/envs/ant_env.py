@@ -1,10 +1,11 @@
 from enum import Enum
-from gymnasium.spaces import Box
-from gymnasium.envs.mujoco.ant_v4 import AntEnv as GymAntEnv
-import numpy as np
+
 import cv2
-from src.envs.samplers.base_sampler import BaseSampler
-from src.envs.meta_env import MetaMixin
+import numpy as np
+from gymnasium.envs.mujoco.ant_v4 import AntEnv as GymAntEnv
+from gymnasium.spaces import Box
+
+from ..core.envs import BaseSampler, MetaMixin
 
 
 class AntMetaClasses(Enum):

@@ -3,15 +3,15 @@ from typing import Dict, Optional, Tuple
 import numpy as np
 import torch as th
 from gymnasium import spaces
-import torch
-from src.core.state_aware_algorithm import StateAwarePolicy
-from src.cemrl.networks import Encoder
-from src.plan2explore.networks import Ensemble
+from src.plan2explore.networks import Ensemble, OneStepModel
+from thesis.core.types import EncoderInput
+from ..core.policies import BasePolicy
+from thesis.cemrl.task_inference import Encoder
 from src.utils import apply_function_to_type
 from stable_baselines3.common.type_aliases import Schedule
 
 
-class Plan2ExplorePolicy(StateAwarePolicy):
+class Plan2ExplorePolicy(BasePolicy):
     """Base Policy of the Plan2Explore Algorithm.
 
     It uses an ensemble of world models to steer the agent into undiscovered areas at training time.
@@ -23,11 +23,10 @@ class Plan2ExplorePolicy(StateAwarePolicy):
         observation_space: spaces.Space,
         action_space: spaces.Space,
         lr_schedule: Schedule,
-        ensemble: th.nn.Module,
         num_actions=3,
         num_timesteps=1,
         repeat_action=10,
-        latent_generator: th.nn.Module | None = None,
+        latent_dim=0,
     ):
         """Initialize the class.
 
@@ -36,15 +35,24 @@ class Plan2ExplorePolicy(StateAwarePolicy):
             num_actions (int, optional): Number of actions to sample. Defaults to 5.
             num_timesteps (int, optional): Number of timesteps to predict the future. Defaults to 20.
         """
-        super().__init__(observation_space, action_space)
-        self.ensemble = ensemble
+        super().__init__(observation_space, action_space, lr_schedule)
         self.num_actions = num_actions
         self.num_timesteps = num_timesteps
+        self.ensemble = Ensemble(
+            th.nn.ModuleList(
+                [
+                    OneStepModel(
+                        latent_dim + spaces.flatdim(observation_space["observation"]) + spaces.flatdim(action_space),
+                        spaces.flatdim(observation_space["observation"]),
+                    )
+                    for i in range(5)
+                ]
+            )
+        )
         self.optimizer = self.optimizer_class(self.parameters(), **self.optimizer_kwargs)
         self.repeat_action = repeat_action
         self.action = []
         self._is_collecting = True
-        self.latent_generator = latent_generator
 
     @th.no_grad()
     def _predict(
@@ -79,7 +87,7 @@ class Plan2ExplorePolicy(StateAwarePolicy):
         reward_means = th.zeros(total_num_timesteps, self.num_actions, n_envs, 1)
 
         for timestep, actions in enumerate(timestep_actions):
-            (state_var, state_mean), (reward_var, reward_mean) = self.ensemble({"obs":observation, "action":actions}, z=z)
+            (state_var, state_mean), (reward_var, reward_mean) = self.ensemble(th.cat([observation, actions, z], dim=-1))
             observation = state_mean
             state_vars[timestep] = state_var
             reward_means[timestep] = reward_mean
@@ -97,31 +105,36 @@ class Plan2ExplorePolicy(StateAwarePolicy):
 
 class CEMRLExplorationPolicy(Plan2ExplorePolicy):
     def __init__(self, *args, encoder: Encoder, **kwargs):
-        super().__init__(*args, **kwargs, latent_generator=encoder)
+        super().__init__(*args, **kwargs, latent_dim=encoder.config.latent_dim)
         self.encoder = encoder
         self.optimizer = self.optimizer_class(self.parameters(), **self.optimizer_kwargs)
 
     def _predict(self, observation: Dict[str, th.Tensor], deterministic: bool = False) -> th.Tensor:  # type: ignore
         prev_observation = self.state  # type: ignore
+        next_obs = {}
+        for k, v in prev_observation.items():  # type:ignore
+            v: th.Tensor
+            next_obs[k] = v.clone()
+            next_obs[k][:, :-1] = v[:, 1:]
+            next_obs[k][:, -1] = observation[k]
 
         with th.no_grad():
-            _, z, state = self.encoder(
-                self.encoder.from_obs_to_encoder_input(prev_observation, observation),  # type: ignore
-                prev_observation["encoder_state"].transpose(1,0), # type: ignore
+            z, _, _ = self.encoder(
+                EncoderInput(
+                    obs=prev_observation["observation"],
+                    action=next_obs["action"],
+                    next_obs=next_obs["observation"],
+                    reward=next_obs["reward"],
+                )
             )
-
-        self.state = observation
-        observation["encoder_state"] = state.transpose(1,0)
         return super()._predict(observation["observation"], deterministic, z=z)
 
     def _reset_states(self, size: int) -> dict[str, th.Tensor | np.ndarray] | Tuple[np.ndarray | th.Tensor, ...]:
-        state = apply_function_to_type(
+        return apply_function_to_type(
             self.observation_space.sample(),
             np.ndarray,
-            lambda x: th.zeros((size, *x.shape), device=self.device),
+            lambda x: th.zeros((size, 30, *x.shape), device=self.device),
         )
-        state["encoder_state"] = th.zeros((size, self.encoder.num_classes, self.encoder.encoder_state_dim), device=self.device)
-        return state
 
 
 class Plan2ExploreMPCPolicy(Plan2ExplorePolicy):

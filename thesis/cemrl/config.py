@@ -1,6 +1,8 @@
+from dataclasses import dataclass
 from typing import Literal
+
 import torch as th
-from dataclasses import field, dataclass
+from jsonargparse import lazy_instance
 
 
 @dataclass
@@ -40,20 +42,20 @@ class TaskInferenceTrainingConfig:
 
 @dataclass
 class TaskInferenceConfig:
-    encoder: EncoderConfig = field(default_factory=EncoderConfig)
-    decoder: DecoderConfig = field(default_factory=DecoderConfig)
-    training: TaskInferenceTrainingConfig = field(default_factory=TaskInferenceTrainingConfig)
+    encoder: EncoderConfig = lazy_instance(EncoderConfig)
+    decoder: DecoderConfig = lazy_instance(DecoderConfig)
+    training: TaskInferenceTrainingConfig = lazy_instance(TaskInferenceTrainingConfig)
 
 
 @dataclass
 class CemrlTrainingConfig:
-    task_inference_gradient_steps: int = 2
-    policy_gradient_steps: int = 1
+    task_inference_gradient_steps: int = 40
+    policy_gradient_steps: int = 20
     encoder_context_length: int = 30
     decoder_context_length: int = 100
 
 
 @dataclass
 class CemrlConfig:
-    task_inference: TaskInferenceConfig = field(default_factory=TaskInferenceConfig)
-    training: CemrlTrainingConfig = field(default_factory=CemrlTrainingConfig)
+    task_inference: TaskInferenceConfig = lazy_instance(TaskInferenceConfig)
+    training: CemrlTrainingConfig = lazy_instance(CemrlTrainingConfig)

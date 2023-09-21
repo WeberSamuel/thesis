@@ -1,94 +1,87 @@
-from typing import Any, Dict, List, NamedTuple, Optional
-from gymnasium import spaces
-from stable_baselines3.common.buffers import DictReplayBuffer
-from stable_baselines3.common.vec_env import VecNormalize
-from stable_baselines3.common.type_aliases import DictReplayBufferSamples
-import torch as th
+from typing import Any, Dict, List, TypedDict, NamedTuple
+
 import numpy as np
+import pandas as pd
+import torch as th
+from gymnasium import Space, spaces
+from scipy.stats import binned_statistic_dd
+from stable_baselines3.common.buffers import DictReplayBuffer
+from stable_baselines3.common.type_aliases import DictReplayBufferSamples, ReplayBufferSamples
+from stable_baselines3.common.vec_env import VecNormalize
 
 
-class DataTemplate(NamedTuple):
-    obs: Dict[str, np.ndarray]
-    next_obs: Dict[str, np.ndarray]
-    actions: np.ndarray
-    rewards: np.ndarray
-    dones: np.ndarray
-    timeouts: np.ndarray
+class PolicyInput(TypedDict):
+    observation: th.Tensor
+    task_encoding: th.Tensor
 
 
-class Storage:
-    def __init__(self, num_episodes: int, max_episode_length, obs_space: spaces.Dict, action_space: spaces.Box) -> None:
-        self.pos = 0
-        self.full = False
-        self.max_episode_length = max_episode_length
-        self.num_episodes = num_episodes
-        num_episodes = num_episodes + 1  # last is a dummy
-        self.episode_lengths = np.zeros(num_episodes, dtype=np.int16)
-        self.checkout = np.zeros(num_episodes, dtype=bool)
-        self.changed = False
-
-        self.observations: Dict[str, np.ndarray] = {key: np.zeros((num_episodes, max_episode_length, *space.shape), dtype=space.dtype) for key, space in obs_space.items()}  # type: ignore
-        self.next_observations: Dict[str, np.ndarray] = {key: np.zeros((num_episodes, max_episode_length, *space.shape), dtype=space.dtype) for key, space in obs_space.items()}  # type: ignore
-        self.rewards = np.zeros((num_episodes, max_episode_length), dtype=np.float32)
-        self.actions = np.zeros((num_episodes, max_episode_length, *action_space.shape), dtype=action_space.dtype)
-        self.dones = np.zeros((num_episodes, max_episode_length), dtype=np.float32)
-        self.timeouts = np.zeros((num_episodes, max_episode_length), dtype=np.float32)
-
-    def __len__(self):
-        return self.num_episodes if self.full else self.pos
-
-    def start_new_episode(self, n_env: int):
-        if n_env == 0:
-            return np.array([], dtype=np.int64)
-        all_eps_idx_from_pos_on = np.arange(self.pos, self.num_episodes + self.pos) % self.num_episodes
-        result = np.where(self.checkout[all_eps_idx_from_pos_on] != True)[0][:n_env]
-        result = all_eps_idx_from_pos_on[result]
-        self.episode_lengths[result] = 0
-        self.checkout[result] = True
-        self.pos = result.max() + 1
-        if self.pos > self.num_episodes:
-            self.full = True
-            self.pos = self.pos % self.num_episodes
-        return result
-
-    def add(self, episode_idxs: np.ndarray, data: DataTemplate, infos: list[dict[str, np.ndarray]]):
-        self.changed = True
-        pos = self.episode_lengths[episode_idxs]
-        for key in self.observations.keys():
-            self.observations[key][episode_idxs, pos] = np.array(data.obs[key])
-        for key in self.next_observations.keys():
-            self.next_observations[key][episode_idxs, pos] = np.array(data.next_obs[key])
-        self.actions[episode_idxs, pos] = data.actions
-        self.rewards[episode_idxs, pos] = data.rewards
-        self.dones[episode_idxs, pos] = data.dones
-        self.timeouts[episode_idxs, pos] = data.timeouts
-        self.episode_lengths[episode_idxs] += 1
-        self.checkout[episode_idxs[data.dones]] = False
+class Output(NamedTuple):
+    obs: dict[str, th.Tensor]
+    next_obs: dict[str, th.Tensor]
+    actions: th.Tensor
+    dones: th.Tensor
+    rewards: th.Tensor
+    timeouts: th.Tensor
 
 
 class ReplayBuffer(DictReplayBuffer):
-    obs_shape: Dict[str, tuple[int, ...]]
-
     def __init__(
         self,
         buffer_size: int,
         observation_space: spaces.Dict,
-        action_space: spaces.Box,
-        max_episode_length: int = 1000,
-        device: th.device | str = "auto",
-        n_envs: int = 1,
-        optimize_memory_usage: bool = False,
-        handle_timeout_termination: bool = True,
-        storage: Storage | None = None,
+        action_space: Space,
+        task_encoder: th.nn.Module | None = None,
+        exploration_buffer_size: int = 1_000_000,
+        n_envs=1,
+        use_bin_weighted_decoder_target_sampling: bool = True,
+        **kwargs,
     ):
-        super().__init__(0, observation_space, action_space, device, n_envs, optimize_memory_usage, handle_timeout_termination)
+        buffer_size = buffer_size - buffer_size % n_envs
+        explore_buffer_size = exploration_buffer_size - exploration_buffer_size % n_envs
+        super().__init__(buffer_size + explore_buffer_size, observation_space, action_space, n_envs=1, **kwargs)
+        self.buffer_size = buffer_size
+        self.task_encoder = task_encoder
 
-        self.pos = np.zeros_like(self.n_envs, dtype=np.int64)
-        self.prepared_sampling = False
-        if storage is None:
-            storage = Storage(buffer_size, max_episode_length, observation_space, action_space)
-        self.storage = storage
-        self.storage_idxs = storage.start_new_episode(self.n_envs)
+        # We use two buffers in one: [NormalBuffer | ExplorationBuffer]
+        self.explore_buffer_size = exploration_buffer_size - exploration_buffer_size % self.n_envs
+        self.explore_pos = buffer_size
+        self.explore_full = False
+
+        self.grouped_goal_idx = None
+        self.use_bin_weighted_decoder_target_sampling = use_bin_weighted_decoder_target_sampling
+
+        self.observations = {k: v.squeeze(1) for k, v in self.observations.items()}
+        self.next_observations = {k: v.squeeze(1) for k, v in self.next_observations.items()}
+        self.actions = self.actions.squeeze(1)
+        self.rewards = self.rewards.squeeze(1)
+        self.dones = self.dones.squeeze(1)
+        self.timeouts = self.timeouts.squeeze(1)
+        self.goal_changes = np.zeros(buffer_size, bool)
+
+    @property
+    def goal_idxs(self):
+        return self.next_observations["goal_idx"].squeeze()
+
+    def size(self) -> int:
+        """Return the current size of the buffer."""
+        return self.normal_size() + self.explore_size()
+
+    def normal_size(self) -> int:
+        """Return the current size of the normal data buffer."""
+        return self.buffer_size if self.full else self.pos
+
+    def explore_size(self) -> int:
+        """Return the current size of the exploration data buffer."""
+        return self.explore_buffer_size if self.explore_full else self.explore_pos - self.buffer_size
+
+    def task_inference_sample(
+        self, batch_size: int, env: VecNormalize | None = None, encoder_window: int = 30, decoder_samples: int = 400
+    ):
+        batch_inds = np.random.choice(self.valid_indices(), batch_size)
+        enc_samples = self.get_encoder_context(batch_inds, env, encoder_window)
+        dec_samples = self.get_decoder_targets(batch_inds, env, decoder_samples)
+
+        return enc_samples, dec_samples
 
     def add(
         self,
@@ -99,173 +92,229 @@ class ReplayBuffer(DictReplayBuffer):
         done: np.ndarray,
         infos: List[Dict[str, Any]],
     ) -> None:
-        self.prepared_sampling = False
+        """
+        Add a new transition to the replay buffer.
 
-        for key in self.observations.keys():
-            if isinstance(self.observation_space.spaces[key], spaces.Discrete):  # type: ignore
-                obs[key] = obs[key].reshape((self.n_envs,) + self.obs_shape[key])  # type: ignore
-            obs[key] = np.array(obs[key])
+        Args:
+            obs (Dict[str, np.ndarray]): The observation at the current time step.
+            next_obs (Dict[str, np.ndarray]): The observation at the next time step.
+            action (np.ndarray): The action taken at the current time step.
+            reward (np.ndarray): The reward received at the next time step.
+            done (np.ndarray): Whether the episode terminated at the next time step.
+            infos (List[Dict[str, Any]]): Additional information about the transition.
 
-        for key in self.next_observations.keys():
-            if isinstance(self.observation_space.spaces[key], spaces.Discrete):  # type: ignore
-                next_obs[key] = next_obs[key].reshape((self.n_envs,) + self.obs_shape[key])  # type: ignore
-            next_obs[key] = np.array(next_obs[key])
+        Returns:
+            None
+        """
+        self.is_decoder_index_build = False
+        is_exploring = np.any([info.get("is_exploration", False) for info in infos])
 
-        data = DataTemplate(
-            obs=obs,
-            next_obs=next_obs,
-            actions=action.reshape((self.n_envs, self.action_dim)),
-            rewards=reward,
-            dones=done,
-            timeouts=np.array([info.get("TimeLimit.truncated", False) for info in infos]),
-        )
+        pos = self.explore_pos if is_exploring else self.pos
+        pos = np.arange(self.n_envs) + pos
 
-        self.storage.add(self.storage_idxs, data, infos)
+        for k, v in self.observations.items():
+            v[pos] = obs[k][:]
+        for k, v in self.next_observations.items():
+            v[pos] = next_obs[k][:]
+        self.actions[pos] = action
+        self.rewards[pos] = reward
+        self.dones[pos] = done
+        self.timeouts[pos] = np.array([info.get("TimeLimit.truncated", False) for info in infos])
+        self.goal_changes[pos] = np.array([info.get("goal_changed", False) for info in infos]) | done
 
-        env_dones = np.where(done)[0]
-        self.storage_idxs[env_dones] = self.storage.start_new_episode(len(env_dones))
+        if is_exploring:
+            self.explore_pos = (
+                self.buffer_size + (self.n_envs + self.explore_pos - self.buffer_size) % self.explore_buffer_size
+            )
+            if self.explore_pos == self.buffer_size:
+                self.explore_full = True
+        else:
+            self.pos = (self.n_envs + self.pos) % self.buffer_size
+            if self.pos == 0:
+                self.full = True
 
-    def sample(self, batch_size: int, env: VecNormalize | None = None) -> DictReplayBufferSamples:
-        self.prepare_sampling_if_necessary()
+    def valid_indices(self, distance_to_buffer_pos: int = 30):
+        """Return the indices of the valid data in the buffer."""
+        normal = np.arange(self.normal_size())
+        if self.full:
+            without = (self.pos + np.arange(self.n_envs * distance_to_buffer_pos)) % self.buffer_size
+            normal = np.setdiff1d(normal, without)
+        explore = np.arange(self.buffer_size, self.buffer_size + self.explore_size())
+        if self.explore_full:
+            without = (
+                self.explore_pos - self.buffer_size + np.arange(self.n_envs * distance_to_buffer_pos)
+            ) % self.explore_buffer_size + self.buffer_size
+            explore = np.setdiff1d(explore, without)
 
-        episode_idxs = np.random.choice(self.valid_episodes, size=batch_size)
-        sample_idxs = np.random.randint(0, self.storage.episode_lengths[episode_idxs], size=batch_size)
+        return np.concatenate([normal, explore])
 
-        return self._get_samples(episode_idxs, sample_idxs, env=env)
-
-    def sample_context(
-        self, batch_size: int, env: VecNormalize | None = None, context_length: int = 64
-    ) -> DictReplayBufferSamples:
-        self.prepare_sampling_if_necessary()
-
-        episode_idxs = np.random.choice(self.valid_episodes, size=batch_size)
-        return self._get_context(episode_idxs, env=env, context_length=context_length)
-
-    def _get_context(
-        self,
-        episode_idx: np.ndarray,
-        sample_idx: np.ndarray | None = None,
-        env: VecNormalize | None = None,
-        context_length: int = 64,
-    ) -> DictReplayBufferSamples:
-        if sample_idx is None:
-            sample_idx = np.random.randint(1, self.storage.episode_lengths[episode_idx], size=len(episode_idx))
-        sample_idxs = np.repeat(sample_idx, context_length)
-        sample_idxs = np.tile(-np.arange(context_length)[::-1], len(episode_idx)) + sample_idxs  # type: ignore
-        episode_idxs = np.repeat(episode_idx, context_length)
-
-        # trick to load zeros for all data before the first step as last episode in storage is dummy
-        episode_idxs[sample_idxs < 0] = -1
-
-        samples = self._get_samples(episode_idxs, sample_idxs, env=env)
-
-        return DictReplayBufferSamples(
-            observations={
-                key: value.reshape(len(episode_idx), context_length, *value.shape[1:])
-                for key, value in samples.observations.items()
-            },
-            actions=samples.actions.reshape(len(episode_idx), context_length, *samples.actions.shape[1:]),
-            next_observations={
-                key: value.reshape(len(episode_idx), context_length, *value.shape[1:])
-                for key, value in samples.next_observations.items()
-            },
-            dones=samples.dones.reshape(len(episode_idx), context_length, *samples.dones.shape[1:]),
-            rewards=samples.rewards.reshape(len(episode_idx), context_length, *samples.rewards.shape[1:]),
-        )
-
-    def _get_samples(
-        self, episode_idxs: np.ndarray, sample_idxs: np.ndarray, env: VecNormalize | None = None
-    ) -> DictReplayBufferSamples:
-        data = DataTemplate(
-            obs={key: obs[episode_idxs, sample_idxs] for key, obs in self.storage.observations.items()},
-            next_obs={key: obs[episode_idxs, sample_idxs] for key, obs in self.storage.next_observations.items()},
-            rewards=self.storage.rewards[episode_idxs, sample_idxs],
-            dones=self.storage.dones[episode_idxs, sample_idxs],
-            timeouts=self.storage.timeouts[episode_idxs, sample_idxs],
-            actions=self.storage.actions[episode_idxs, sample_idxs],
-        )
-
-        return self.post_process_samples(data, env)
-
-    def post_process_samples(self, data: DataTemplate, env: VecNormalize | None = None) -> DictReplayBufferSamples:
-        obs = self._normalize_obs(data.obs, env)
-        next_obs = self._normalize_obs(data.next_obs, env)
-
-        return DictReplayBufferSamples(
-            observations={k: self.to_torch(v) for k, v in obs.items()},  # type: ignore
-            next_observations={k: self.to_torch(v) for k, v in next_obs.items()},  # type: ignore
-            actions=self.to_torch(data.actions),
-            dones=self.to_torch(data.dones * (1 - data.timeouts))[..., None],
-            rewards=self.to_torch(self._normalize_reward(data.rewards[..., None], env)),
-        )
-
-    def prepare_sampling_if_necessary(self):
-        if self.storage.changed:
-            self.prepare_sampling(self.storage)
-            self.storage.changed = False
-
-    def prepare_sampling(self, storage: Storage):
-        self.valid_episodes = np.where(storage.episode_lengths > 0)[0]
-
-    def get_empty_data_template(self, batch_size, batch_length):
-        return DataTemplate(
-            obs={
-                k: np.zeros((batch_size, batch_length, *v.shape[2:]), dtype=v.dtype)
-                for k, v in self.storage.observations.items()
-            },
-            next_obs={
-                k: np.zeros((batch_size, batch_length, *v.shape[2:]), dtype=v.dtype)
-                for k, v in self.storage.next_observations.items()
-            },
-            actions=np.zeros((batch_size, batch_length, *self.storage.actions.shape[2:]), dtype=self.storage.actions.dtype),
-            rewards=np.zeros((batch_size, batch_length, *self.storage.rewards.shape[2:]), dtype=self.storage.rewards.dtype),
-            dones=np.zeros((batch_size, batch_length, *self.storage.dones.shape[2:]), dtype=self.storage.dones.dtype),
-            timeouts=np.zeros((batch_size, batch_length, *self.storage.timeouts.shape[2:]), dtype=self.storage.timeouts.dtype),
-        )
-
-    def add_episode_to_data_template(
-        self,
-        to_batch_idx: np.ndarray,
-        to_sample_idx: np.ndarray,
-        from_episode: np.ndarray,
-        from_start_stop: np.ndarray,
-        data: DataTemplate,
+    def dreamer_sample(
+        self, batch_size: int, env: VecNormalize | None = None, goals: np.ndarray | None = None, max_length: int = 64
     ):
-        from_start_stop = from_start_stop.copy()
-        data_length = data.actions.shape[1]
+        indices = np.random.choice(self.valid_indices(), batch_size)
+        data, indices, mask = self.get_encoder_context(indices, env, max_length, return_indices=True)  # type:ignore
 
-        start, stop = from_start_stop[:, 0], from_start_stop[:, 1]
-        lenght = stop - start
-        stop += np.minimum(data_length - to_sample_idx - lenght, 0)
-        lenght = stop - start
-        # numpy repeat element n times where n comes from the length array
+        goal_idx = self.to_torch(self.goal_idxs[indices])
+        goal_idx[mask] = -1
+        goal_idx = goal_idx[..., None]
 
-        from_episodes = np.repeat(from_episode, lenght)
-        from_samples = np.concatenate([np.arange(start, stop) for start, stop in from_start_stop])
+        starts = {}
+        for i in th.unique(mask[0]):
+            start = mask[1][mask[0] == i].max() + 1
+            if start < max_length:
+                starts[i] = start
+        is_first = th.zeros_like(goal_idx, dtype=th.bool)
+        for i, start in starts.items():
+            is_first[i, start] = True
+        is_first = is_first.float().squeeze(-1)
 
-        to_batch_idx = np.repeat(to_batch_idx, lenght)
-        to_sample_idx = np.concatenate([np.arange(sample_idx, sample_idx + lenght) for sample_idx, lenght in zip(to_sample_idx, lenght)])
+        goals_tensor = self.to_torch(goals[self.goal_idxs[indices]])
+        goals_tensor[mask] = 0.0
+        if len(goals_tensor.shape) < 3:
+            goals_tensor = goals_tensor[..., None]
 
-        for k, v in self.storage.observations.items():
-            data.obs[k][(to_batch_idx, to_sample_idx)] = v[(from_episodes, from_samples)]
-        for k, v in self.storage.next_observations.items():
-            data.next_obs[k][(to_batch_idx, to_sample_idx)] = v[(from_episodes, from_samples)]
+        return {
+            "observation": data.observations["observation"],
+            "goal_idx": goal_idx,
+            "goal": goals_tensor,
+            "is_first": is_first,
+            "is_terminal": (data.dones * (1 - data.dones.new_tensor(self.timeouts[indices]).float())).squeeze(-1),
+            "reward": data.rewards,
+            "action": data.actions,
+        }
 
-        data.actions[(to_batch_idx, to_sample_idx)] = self.storage.actions[(from_episodes, from_samples)]
-        data.rewards[(to_batch_idx, to_sample_idx)] = self.storage.rewards[(from_episodes, from_samples)]
-        data.dones[(to_batch_idx, to_sample_idx)] = self.storage.dones[(from_episodes, from_samples)]
-        data.timeouts[(to_batch_idx, to_sample_idx)] = self.storage.timeouts[(from_episodes, from_samples)]
+    def sample(self, batch_size: int, env: VecNormalize | None = None):
+        """
+        Sample a batch of transitions from the replay buffer.
+        The data should be used for policy training (SAC, etc.).
 
+        Args:
+            batch_size (int): The number of transitions to sample.
+            env (VecNormalize | None): The vectorized environment used to normalize the observations and rewards.
 
-class PrepareGoalToEpisode:
-    def __init__(self, *args, **kwargs) -> None:
-        super().__init__(*args, **kwargs)
+        Returns:
+            DictReplayBufferSamples: A dictionary of tensors containing the sampled transitions.
+        """
+        assert self.task_encoder is not None
+        indices = np.random.choice(self.valid_indices(), batch_size)
+        encoder_context, *_ = self.get_encoder_context(indices, env)
+        with th.no_grad():
+            _, z, _ = self.task_encoder(
+                encoder_context.observations,
+                encoder_context.actions,
+                encoder_context.rewards,
+                encoder_context.next_observations,
+            )
+        output = self.get_output(indices, env)
+        return DictReplayBufferSamples(
+            observations=PolicyInput(observation=output.obs["observation"], task_encoding=z),  # type: ignore
+            next_observations=PolicyInput(observation=output.next_obs["observation"], task_encoding=z),  # type: ignore
+            actions=output.actions,
+            dones=output.dones * (1 - output.timeouts),
+            rewards=output.rewards,
+        )
 
-    def prepare_sampling(self, storage: Storage):
-        if "goal_idx" not in storage.observations:
-            raise ValueError("goal_idx not in storage.observations")
-        self.goal_to_episode = {}
-        for episode, goal_idxs in enumerate(storage.observations["goal_idx"][: len(storage)]):
-            for goal_idx in np.unique(goal_idxs):
-                episodes = self.goal_to_episode.setdefault(goal_idx, [])
-                episodes.append(episode)
+    def get_encoder_context(self, indices: np.ndarray, env: VecNormalize | None = None, encoder_window=30):
+        """Return the context to be used for the encoder."""
+        normal_samples_mask = indices < self.buffer_size
+        # flip arange and subtract from start
+        indices = indices[:, None] - self.n_envs * np.flip(np.arange(encoder_window))[None]
+        # take care of normal buffer overflow
+        indices[normal_samples_mask] = indices[normal_samples_mask] % self.buffer_size
+        # take care of exploration buffer overflow
+        indices[~normal_samples_mask] = (
+            indices[~normal_samples_mask] - self.buffer_size
+        ) % self.explore_buffer_size + self.buffer_size
+
+        output = self.get_output(indices, env)
+
+        # Zero out the data of old episodes (assignment in single step is faster)
+        batch_idx, time_idx = th.where(output.dones)
+        additional_batch_idx = [batch_idx]
+        additional_time_idx = [time_idx]
+        for b, i in zip(batch_idx.tolist(), time_idx.tolist()):  # type: ignore
+            additional_batch_idx.append(th.full((i,), b, device=batch_idx.device))
+            additional_time_idx.append(th.arange(i, device=time_idx.device))
+        batch_idx = th.cat(additional_batch_idx)
+        time_idx = th.cat(additional_time_idx)
+
+        for k, v in output.obs.items():
+            v[(batch_idx, time_idx)] = 0.0
+        for k, v in output.next_obs.items():
+            v[(batch_idx, time_idx)] = 0.0
+        output.actions[(batch_idx, time_idx)] = 0.0
+        output.rewards[(batch_idx, time_idx)] = 0.0
+        output.dones[(batch_idx, time_idx)] = 0.0
+
+        data = DictReplayBufferSamples(
+            observations=output.obs,
+            next_observations=output.next_obs,
+            actions=output.actions,
+            dones=output.dones,
+            rewards=output.rewards,
+        )
+
+        return data, indices, (batch_idx, time_idx)
+
+    def get_decoder_targets(self, base_indices: np.ndarray, env: VecNormalize | None = None, num_decoder_targets: int = 300):
+        if not self.is_decoder_index_build:
+            self._build_decoder_index()
+            self.is_decoder_index_build = True
+
+        indices = self._select_decoder_target_indices(base_indices, num_decoder_targets)
+
+        return ReplayBufferSamples(
+            observations=self.to_torch(self._normalize_obs(self.observations[indices], env)),  # type: ignore
+            next_observations=self.to_torch(self._normalize_obs(self.next_observations[indices], env)),  # type: ignore
+            actions=self.to_torch(self.actions[indices]),
+            dones=self.to_torch(self.dones[indices] * (1 - self.timeouts[indices])),
+            rewards=self.to_torch(self._normalize_reward(self.rewards[indices], env))[..., None],
+        )
+
+    def _select_decoder_target_indices(self, indices: np.ndarray, num_decoder_targets: int) -> np.ndarray:
+        group_ids = self.goal_idxs[indices]
+        selected_ids = (np.random.rand(len(indices), num_decoder_targets) * self.grouped_goal_sizes[group_ids, None]).astype(
+            int
+        )
+        indices = self.grouped_goal_idx[group_ids[:, None], selected_ids]  # type: ignore
+        assert np.all(self.goal_idxs[indices] == self.goal_idxs[indices[:, 0]][:, None])
+        return indices
+
+    def _build_decoder_index(self):
+        df = pd.DataFrame({"goal_idx": self.goal_idxs})
+        df = df[df.goal_idx != -1]
+        groups = df.groupby(by=df.goal_idx)
+        self.grouped_goal_idx = groups.groups
+        self.grouped_goal_sizes = np.zeros(self.goal_idxs.max() + 1, dtype=int)
+        self.grouped_goal_sizes[list(groups.groups.keys())] = groups.size().values
+
+        if self.use_bin_weighted_decoder_target_sampling:
+            indices = self.valid_indices()
+            _, _, bin_index = binned_statistic_dd(self.observations[indices], indices, statistic="count", bins=10)
+            _, idx_to_unique, bin_stats = np.unique(bin_index, return_inverse=True, return_counts=True)
+            bin_stats = bin_stats.max() / bin_stats
+            bin_stats = bin_stats / bin_stats.sum()
+            weighted_bin_prob = np.zeros(self.buffer_size + self.explore_buffer_size, dtype=float)
+            weighted_bin_prob[indices] = bin_stats[idx_to_unique]
+
+            for k, v in self.grouped_goal_idx.items():
+                weights = weighted_bin_prob[v] / weighted_bin_prob[v].sum()  # type: ignore
+                self.grouped_goal_idx[k] = np.random.choice(v, len(v), p=weights)  # type: ignore
+
+        grouped_goal_idx = np.zeros((self.goal_idxs.max() + 1, self.grouped_goal_sizes.max() + 1), dtype=int)
+        for k, v in self.grouped_goal_idx.items():
+            grouped_goal_idx[k, : len(v)] = v
+        self.grouped_goal_idx = grouped_goal_idx
+
+    def get_output(self, indices: np.ndarray, env: VecNormalize | None = None):
+        obs = self._normalize_obs({k: v[indices] for k, v in self.observations.items()}, env)
+        next_obs = self._normalize_obs({k: v[indices] for k, v in self.next_observations.items()}, env)
+
+        return Output(
+            obs={k: self.to_torch(v) for k, v in obs.items()},
+            next_obs={k: self.to_torch(v) for k, v in next_obs.items()},
+            actions=self.to_torch(self.actions[indices]),
+            dones=self.to_torch(self.dones[indices]),
+            rewards=self.to_torch(self._normalize_reward(self.rewards[indices], env))[..., None],
+            timeouts=self.to_torch(self.timeouts[indices])[..., None],
+        )

@@ -1,4 +1,4 @@
-from thesis.cemrl.cemrl import Cemrl, CemrlPolicy
+from thesis.cemrl.algorithm import Cemrl, CemrlPolicy
 from thesis.dreamer.dreamer import Dreamer, DreamerPolicy
 from thesis.smm.smm import Smm, SmmPolicy
 

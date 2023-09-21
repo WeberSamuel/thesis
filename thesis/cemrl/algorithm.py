@@ -10,19 +10,19 @@ from stable_baselines3.common.utils import get_parameters_by_name
 
 from ..core.algorithm import BaseAlgorithm, StateStorage
 from ..core.policy import BasePolicy
-from .buffer import CemrlReplayBuffer
+from ..core.buffer import ReplayBuffer
 from .policy import CemrlPolicy
 
 
 class Cemrl(BaseAlgorithm):
     policy: CemrlPolicy
-    replay_buffer: CemrlReplayBuffer
+    replay_buffer: ReplayBuffer
 
     def __init__(
         self,
         policy: str | type[BasePolicy],
         env: GymEnv | str,
-        learning_rate: float | Schedule,
+        learning_rate: float | Schedule = 1e-3,
         buffer_size: int = 1000000,
         learning_starts: int = 100,
         batch_size: int = 256,
@@ -31,7 +31,7 @@ class Cemrl(BaseAlgorithm):
         train_freq: int | Tuple[int, str] = 1,
         gradient_steps: int = 1,
         action_noise: ActionNoise | None = None,
-        replay_buffer_class: type[CemrlReplayBuffer] | None = CemrlReplayBuffer,
+        replay_buffer_class: type[ReplayBuffer] | None = ReplayBuffer,
         replay_buffer_kwargs: Dict[str, Any] | None = None,
         optimize_memory_usage: bool = False,
         policy_kwargs: Dict[str, Any] | None = None,
@@ -69,7 +69,7 @@ class Cemrl(BaseAlgorithm):
         self.sac = SAC(
             "MultiInputPolicy",
             env,
-            learning_rate=self.learning_rate,
+            learning_rate=learning_rate,
             buffer_size=0,
             learning_starts=self.learning_starts,
             batch_size=self.batch_size,
@@ -113,8 +113,7 @@ class Cemrl(BaseAlgorithm):
         self.sac.policy = self.policy.sac_policy
         self.sac.replay_buffer = self.replay_buffer
         internal_sac_setup()
-        self.replay_buffer.task_inference = self.policy.task_inference
-        self.replay_buffer.encoder_context_length = self.policy.config.training.encoder_context_length
+        self.replay_buffer.task_encoder = self.policy.task_inference
         self.config = self.policy.config.training
 
     def _setup_learn(
@@ -134,7 +133,7 @@ class Cemrl(BaseAlgorithm):
         config = self.policy.config.training
         for i in range(gradient_steps):
             for j in range(config.task_inference_gradient_steps):
-                encoder_samples, decoder_samples = self.replay_buffer.cemrl_sample(
+                encoder_samples, decoder_samples = self.replay_buffer.task_inference_sample(
                     batch_size, self.get_vec_normalize_env(), config.encoder_context_length, config.decoder_context_length
                 )
                 metrics = self.policy.task_inference.training_step(encoder_samples, decoder_samples)
@@ -144,6 +143,9 @@ class Cemrl(BaseAlgorithm):
 
         super().train(gradient_steps, batch_size)
         self.policy.train(False)
+
+    def _excluded_save_params(self) -> list[str]:
+        return super()._excluded_save_params() + ["sac"]
 
 class CemrlStateStorage(StateStorage):
     def _on_step(self) -> bool:

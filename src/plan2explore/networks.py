@@ -4,7 +4,7 @@ import torch as th
 from torch.utils.data import default_collate
 from stable_baselines3.common.torch_layers import create_mlp
 from src.utils import apply_function_to_type
-
+from thesis.core.utils import build_network
 
 class Ensemble(th.nn.Module):
     """Ensemble of networks.
@@ -90,3 +90,14 @@ class WorldModel(th.nn.Module):
         next_obs = obs_pred if next_obs is None else next_obs
         reward_pred = self.reward_predictor(th.cat([obs, action, next_obs, z], dim=-1))
         return obs_pred, reward_pred
+    
+class OneStepModel(th.nn.Module):
+    def __init__(self, input_dim: int, obs_dim: int, reward_dim: int = 1, complexity = 20.) -> None:
+        super().__init__()
+        self.obs_dim = obs_dim
+        self.reward_dim = reward_dim
+        self.network = build_network(input_dim, [int(complexity * input_dim)] * 2, th.nn.ELU, obs_dim + reward_dim)
+
+    def forward(self, x: th.Tensor):
+        x = self.network(x)
+        return x[..., :self.obs_dim], x[..., -self.reward_dim:]
