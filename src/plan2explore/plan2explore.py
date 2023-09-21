@@ -15,16 +15,38 @@ from src.plan2explore.policies import Plan2ExplorePolicy
 from thesis.core.types import EncoderInput
 from thesis.cemrl.algorithm import Cemrl
 
+
 class Plan2Explore(BaseAlgorithm):
     """Uses a world model for exploration via uncertainty and reward prediction during evaluation."""
 
     def __init__(
-        self, policy: Type[Plan2ExplorePolicy], env: Env | VecEnv, learning_rate=1e-3, _init_setup_model=True, learning_starts=1024, gradient_steps=1, train_freq=1, main_algorithm: BaseAlgorithm|None = None, **kwargs
+        self,
+        policy: Type[Plan2ExplorePolicy],
+        env: Env | VecEnv,
+        learning_rate=1e-3,
+        _init_setup_model=True,
+        learning_starts=1024,
+        gradient_steps=1,
+        train_freq=1,
+        parent_algorithm: BaseAlgorithm | None = None,
+        **kwargs,
     ):
-        if isinstance(main_algorithm, Cemrl):
-            kwargs.setdefault("policy_kwargs", {})["encoder"] = main_algorithm.policy.task_inference.encoder
-        """Initialize the Algorithm."""
-        super().__init__(policy, env, learning_rate, learning_starts=learning_starts, gradient_steps=gradient_steps, train_freq=train_freq, **kwargs)
+        if isinstance(parent_algorithm, Cemrl):
+            policy_kwargs = kwargs.get("policy_kwargs", None)
+            if policy_kwargs is None:
+                policy_kwargs = {}
+            policy_kwargs["encoder"] = parent_algorithm.policy.task_inference.encoder
+            kwargs["policy_kwargs"] = policy_kwargs
+
+        super().__init__(
+            policy,
+            env,
+            learning_rate,
+            learning_starts=learning_starts,
+            gradient_steps=gradient_steps,
+            train_freq=train_freq,
+            **kwargs,
+        )
 
         if _init_setup_model:
             self._setup_model()
@@ -52,12 +74,14 @@ class Plan2Explore(BaseAlgorithm):
             enc_input, dec_input = self.replay_buffer.task_inference_sample(batch_size)
             obs = dec_input.observations["observation"]
             next_obs = dec_input.next_observations["observation"]
-            z, _, *_ = task_encoder(EncoderInput(
-                obs=enc_input.observations["observation"],
-                action=enc_input.actions,
-                reward=enc_input.rewards,
-                next_obs=enc_input.next_observations["observation"],
-            ))
+            z, _, *_ = task_encoder(
+                EncoderInput(
+                    obs=enc_input.observations["observation"],
+                    action=enc_input.actions,
+                    reward=enc_input.rewards,
+                    next_obs=enc_input.next_observations["observation"],
+                )
+            )
             dec_timesteps = dec_input.actions.shape[1]
             z = th.broadcast_to(z[:, None], (batch_size, dec_timesteps, *z.shape[1:]))
             z = z.reshape(batch_size * dec_timesteps, *z.shape[2:])

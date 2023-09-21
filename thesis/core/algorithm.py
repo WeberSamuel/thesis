@@ -8,9 +8,10 @@ from gymnasium import spaces
 from stable_baselines3.common.callbacks import BaseCallback, CallbackList
 from stable_baselines3.common.noise import ActionNoise
 from stable_baselines3.common.off_policy_algorithm import OffPolicyAlgorithm
-from stable_baselines3.common.type_aliases import GymEnv, MaybeCallback, RolloutReturn, Schedule, TrainFreq
+from stable_baselines3.common.type_aliases import GymEnv, MaybeCallback, RolloutReturn, Schedule, TrainFreq, TrainFrequencyUnit
 
 from thesis.core.buffer import ReplayBuffer
+from thesis.core.callback import TagExplorationDataCallback
 from thesis.core.policy import BasePolicy
 
 from .buffer import ReplayBuffer
@@ -44,11 +45,11 @@ class BaseAlgorithm(OffPolicyAlgorithm):
         device: th.device | str = "auto",
         monitor_wrapper: bool = True,
         seed: int | None = None,
-        sub_algorithm: type[OffPolicyAlgorithm] | None = None,
+        sub_algorithm_class: type[OffPolicyAlgorithm] | None = None,
         sub_algorithm_kwargs: Dict[str, Any] | None = None,
-        explore_algorithm: type[OffPolicyAlgorithm] | None = None,
+        explore_algorithm_class: type[OffPolicyAlgorithm] | None = None,
         explore_algorithm_kwargs: Dict[str, Any] | None = None,
-        parent_algorithm: OffPolicyAlgorithm | None = None,
+        parent_algorithm: Optional["BaseAlgorithm"] = None,
         _init_setup_model: bool = True,
     ):
         super().__init__(
@@ -78,6 +79,26 @@ class BaseAlgorithm(OffPolicyAlgorithm):
             sde_support=False,
         )
         self.state_storage = StateStorage()
+        self.sub_algorithm_class = sub_algorithm_class
+        self.sub_algorithm_kwargs = sub_algorithm_kwargs or {}
+        self.explore_algorithm_class = explore_algorithm_class
+        self.explore_algorithm_kwargs = explore_algorithm_kwargs or {}
+        self.parent_algorithm = parent_algorithm
+
+    def _setup_model(self) -> None:
+        super()._setup_model()
+        if self.sub_algorithm_class is not None:
+            if issubclass(self.sub_algorithm_class, BaseAlgorithm):
+                self.sub_algorithm_kwargs["parent_algorithm"] = self
+            self.sub_algorithm = self.sub_algorithm_class(env=self.env, **self.sub_algorithm_kwargs)
+            self.sub_algorithm.replay_buffer = self.replay_buffer
+            self.sub_algorithm.policy = getattr(self.policy, "sub_policy", self.sub_algorithm.policy)
+        if self.explore_algorithm_class is not None:
+            if issubclass(self.explore_algorithm_class, BaseAlgorithm):
+                self.explore_algorithm_kwargs["parent_algorithm"] = self
+            self.exploration_algorithm = self.explore_algorithm_class(**self.explore_algorithm_kwargs)
+            self.exploration_algorithm.replay_buffer = self.replay_buffer
+            self.exploration_algorithm.policy = getattr(self.policy, "exploration_policy", self.exploration_algorithm.policy)
 
     def learn(
         self,
@@ -92,8 +113,38 @@ class BaseAlgorithm(OffPolicyAlgorithm):
         return super().learn(total_timesteps, callback, 999999999, tb_log_name, reset_num_timesteps, progress_bar)
 
     def train(self, gradient_steps: int, batch_size: int) -> None:
-        if (self.num_timesteps // self.n_envs) % max(1, self.log_interval // self.train_freq.frequency) == 0: # type: ignore
-            self._dump_logs()
+        if self.sub_algorithm is not None:
+            self.sub_algorithm.train(self.sub_algorithm.gradient_steps, self.sub_algorithm.batch_size)
+        if self.exploration_algorithm is not None:
+            self.exploration_algorithm.train(self.exploration_algorithm.gradient_steps, self.exploration_algorithm.batch_size)
+
+        if (self.num_timesteps // self.n_envs) % max(1, self.log_interval // self.train_freq.frequency) == 0:  # type: ignore
+            # we don't want to log too often
+            if self.parent_algorithm is None:
+                self._dump_logs()
+
+    def collect_rollouts(
+        self,
+        env: VecEnv,
+        callback: BaseCallback,
+        train_freq: TrainFreq,
+        replay_buffer: ReplayBuffer,
+        action_noise: ActionNoise | None = None,
+        learning_starts: int = 0,
+        log_interval: int | None = None,
+    ) -> RolloutReturn:
+        if self.exploration_algorithm is not None:
+            assert self.exploration_algorithm.env is not None
+            self.exploration_algorithm.collect_rollouts(
+                self.exploration_algorithm.env,
+                self.exploration_callbacks,
+                self.exploration_algorithm.train_freq,  # type: ignore
+                replay_buffer,
+                self.exploration_algorithm.action_noise,
+                self.exploration_algorithm.learning_starts,
+                log_interval,
+            )
+        return super().collect_rollouts(env, callback, train_freq, replay_buffer, action_noise, learning_starts, log_interval)
 
     # original function adjusted to pass state to policy
     def _sample_action(
@@ -155,13 +206,31 @@ class BaseAlgorithm(OffPolicyAlgorithm):
         total_timesteps, orig_callback = super()._setup_learn(
             total_timesteps, callback, reset_num_timesteps, tb_log_name, progress_bar
         )
+        if self.sub_algorithm is not None:
+            self.sub_algorithm.set_logger(self.logger)
+
+        if self.exploration_algorithm is not None:
+            self.exploration_algorithm.set_logger(self.logger)
+            _, self.exploration_callbacks = self.exploration_algorithm._setup_learn(
+                total_timesteps, TagExplorationDataCallback(), False, "exploration"
+            )
+            self.exploration_algorithm.collect_rollouts(
+                self.exploration_algorithm.env,  # type: ignore
+                self.exploration_callbacks,
+                TrainFreq(self.learning_starts, TrainFrequencyUnit.STEP),
+                self.replay_buffer,
+                self.exploration_algorithm.action_noise,
+                self.exploration_algorithm.learning_starts,
+            )
+            self.learning_starts = 0
+
         callback = CallbackList([self.state_storage])
         callback.init_callback(self)
         callback.callbacks.append(orig_callback)
         return total_timesteps, callback
 
     def _excluded_save_params(self) -> list[str]:
-        return super()._excluded_save_params() + ["state_storage"]
+        return super()._excluded_save_params() + ["state_storage", "sub_algorithm", "exploration_algorithm"]
 
     def _get_torch_save_params(self) -> Tuple[list[str], list[str]]:
         state_dicts, tensors = super()._get_torch_save_params()

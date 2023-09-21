@@ -30,12 +30,13 @@ from src.callbacks import (
 from gymnasium.wrappers.time_limit import TimeLimit
 from stable_baselines3.common.utils import get_latest_run_id
 
+
 @dataclass
 class Callbacks:
     custom_callback: Optional[BaseCallback] = None
     eval_callback: Optional[EvalCallback] = None
     save_heatmap_callback: Optional[SaveHeatmapCallback] = None
-    eval_exploration_callback: Optional[Plan2ExploreEvalCallback|P2EEvalCallback] = None
+    eval_exploration_callback: Optional[Plan2ExploreEvalCallback | P2EEvalCallback] = None
     exploration_callback: Optional[ExplorationCallback | ExplorationCallback] = None
     save_config_callback: Optional[SaveConfigCallback] = None
     checkpoint_callback: Optional[CheckpointCallback] = None
@@ -89,7 +90,7 @@ def create_env(
 
     goal_sampler = getattr(kwargs["env"], "goal_sampler", None)
     if vec_env_class is not None:
-        env = vec_env_class([lambda: make_single_env(goal_sampler) for _ in range(n_envs)]) # type:ignore
+        env = vec_env_class([lambda: make_single_env(goal_sampler) for _ in range(n_envs)])  # type:ignore
     else:
         env = DummyVecEnv([lambda: make_single_env(goal_sampler)])
     return env
@@ -133,10 +134,14 @@ def add_base_algorithm(
     skip_optimizer=False,
     skip_feature_extractor=False,
     directly_use_policy=False,
+    instantiate_algorithm=True,
 ):
     key = key + "."
     parser.add_subclass_arguments(
-        BaseAlgorithm, key + "algorithm", skip=set(skip_on_algorithm), instantiate=len(skip_on_algorithm) == 0
+        BaseAlgorithm,
+        key + "algorithm",
+        skip=set(skip_on_algorithm),
+        instantiate=len(skip_on_algorithm) == 0 and instantiate_algorithm,
     )
     if not skip_policy:
         parser.add_subclass_arguments(
@@ -188,6 +193,7 @@ def add_base_algorithm(
             key + "replay_buffer.init_args", key + "algorithm.init_args.replay_buffer_kwargs", compute_fn=lambda x: vars(x)
         )
 
+
 if __name__ == "__main__":
     parser = ArgumentParser(parser_mode="omegaconf")
     parser.add_argument("--config", action=ActionConfigFile, help="Path to a configuration file in json or yaml format.")
@@ -219,23 +225,32 @@ if __name__ == "__main__":
     # Argument registration and linking for algorithms
     add_base_algorithm(parser, "main", directly_use_policy=False)
 
-    add_base_algorithm(parser, "exploration")
-    parser.link_arguments("main.policy.encoder", "exploration.policy.init_args.encoder", apply_on="instantiate")
-    parser.link_arguments("main.policy.decoder", "exploration.policy.init_args.ensemble", apply_on="instantiate")
+    add_base_algorithm(parser, "exploration", skip_on_algorithm=["env"], skip_on_policy=["encoder"], instantiate_algorithm=False)
+    parser.link_arguments("exploration.algorithm.class_path", "main.algorithm.init_args.explore_algorithm_class")
     parser.link_arguments(
-        "exploration.algorithm", "callback.exploration_callback.init_args.exploration_algorithm", apply_on="instantiate"
-    )
-    parser.link_arguments(
-        "exploration.algorithm", "callback.eval_exploration_callback.init_args.eval_model", apply_on="instantiate"
+        "exploration.algorithm.init_args",
+        "main.algorithm.init_args.explore_algorithm_kwargs",
+        compute_fn=lambda x: vars(x),
     )
 
-    add_base_algorithm(parser, "sub_algorithm", skip_on_algorithm=["env", "policy", "buffer_size"], skip_replay_buffer=True)
-    parser.link_arguments("sub_algorithm.algorithm.class_path", "main.policy.init_args.sub_policy_algorithm_class")
+    add_base_algorithm(parser, "sub_algorithm", skip_on_algorithm=["env", "buffer_size"], skip_replay_buffer=True)
+    parser.link_arguments("sub_algorithm.algorithm.class_path", "main.algorithm.init_args.sub_algorithm_class")
     parser.link_arguments(
         "sub_algorithm.algorithm.init_args",
-        "main.policy.init_args.sub_policy_algorithm_kwargs",
+        "main.algorithm.init_args.sub_algorithm_kwargs",
         apply_on="instantiate",
         compute_fn=lambda x: vars(x),
+    )
+
+    parser.link_arguments(
+        "main.algorithm.exploration_algorithm",
+        "callback.exploration_callback.init_args.exploration_algorithm",
+        apply_on="instantiate",
+    )
+    parser.link_arguments(
+        "main.algorithm.exploration_algorithm",
+        "callback.eval_exploration_callback.init_args.eval_model",
+        apply_on="instantiate",
     )
 
     # Argument registration and linking for environments
@@ -243,13 +258,16 @@ if __name__ == "__main__":
     parser.link_arguments("envs.env", "main.algorithm.init_args.env", apply_on="instantiate")
     parser.link_arguments("envs.env", "main.policy.init_args.env", apply_on="instantiate")
     parser.link_arguments("envs.env.cemrl_wrapper.init_args.n_stack", "main.algorithm.init_args.encoder_window")
-    parser.link_arguments("envs.env", "exploration.algorithm.init_args.env", apply_on="instantiate")
     parser.link_arguments("envs.env.time_limit", "main.replay_buffer.init_args.max_episode_length")
 
     add_env(parser, "envs.exploration_env")
-    parser.link_arguments("envs.exploration_env", "exploration.algorithm.init_args.env", apply_on="instantiate")
-    parser.link_arguments("envs.exploration_env", "exploration.policy.init_args.env", apply_on="instantiate")
-    parser.link_arguments("envs.exploration_env.time_limit", "exploration.replay_buffer.init_args.max_episode_length")
+    parser.link_arguments(
+        "envs.exploration_env", "exploration.algorithm.init_args.explore_algorithm_kwargs.env", apply_on="instantiate"
+    )
+    parser.link_arguments(
+        "envs.exploration_env.time_limit",
+        "main.algorithm.init_args.explore_algorithm_kwargs.replay_buffer.init_args.max_episode_length",
+    )
 
     add_env(parser, "envs.eval_env")
     parser.link_arguments("envs.env.cemrl_wrapper.init_args.n_stack", "envs.eval_env.cemrl_wrapper.init_args.n_stack")
@@ -269,8 +287,6 @@ if __name__ == "__main__":
         compute_fn=lambda train, exploration, eval, exploration_eval: locals(),
         apply_on="instantiate",
     )
-
-    parser.link_arguments("main.algorithm", "exploration.algorithm.init_args.main_algorithm", apply_on="instantiate")
 
     parser.add_argument("subcommand", choices=["train", "train-exploration", "eval"])
     parser.add_argument("--wandb", type=bool, default=True)
@@ -294,7 +310,6 @@ if __name__ == "__main__":
         i.eval_exploration_callback.init_args.eval_freq = total_steps // i.eval_exploration_callback.init_args.eval_freq
     if i.checkpoint_callback is not None:
         i.checkpoint_callback.init_args.save_freq = total_steps // i.checkpoint_callback.init_args.save_freq
-    
 
     if use_wandb:
         log_dir = cfg.main.algorithm.init_args.tensorboard_log
@@ -317,8 +332,6 @@ if __name__ == "__main__":
 
     if command == "train":
         init_cfg.main.algorithm.learn(**init_cfg.learn)
-    elif command == "train-exploration":
-        init_cfg.exploration.algorithm.learn(**init_cfg.learn)
     elif command == "eval":
         raise NotImplementedError()
     elif command == "train_with_best_replay_buffer":

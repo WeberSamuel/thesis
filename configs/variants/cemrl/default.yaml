@@ -3,8 +3,11 @@ main:
   replay_buffer: thesis.core.buffer.ReplayBuffer
   policy: thesis.cemrl.policy.CemrlPolicy
 sub_algorithm: 
-  algorithm: null
-  policy: null
+  algorithm: 
+    class_path: stable_baselines3.sac.SAC
+    init_args:
+      learning_rate: 1e-3
+  policy: stable_baselines3.sac.policies.MultiInputPolicy
 exploration:
   algorithm: null
   policy: null
