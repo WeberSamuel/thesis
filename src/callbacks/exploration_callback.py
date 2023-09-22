@@ -189,6 +189,7 @@ class ExplorationCallback(BaseCallback):
             reset_num_timesteps=False,
             progress_bar=True,
         )
+        self.exploration_algorithm.set_logger(self.exploration_algorithm.logger)
         if isinstance(self.exploration_algorithm, OffPolicyAlgorithm):
             self.exploration_algorithm._dump_logs()
         return super()._on_training_start()

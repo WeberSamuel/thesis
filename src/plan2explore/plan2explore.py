@@ -20,7 +20,7 @@ class Plan2Explore(StateAwareOffPolicyAlgorithm):
     """Uses a world model for exploration via uncertainty and reward prediction during evaluation."""
 
     def __init__(
-        self, policy: Type[Plan2ExplorePolicy], env: Env | VecEnv, learning_rate=1e-3, _init_setup_model=True, learning_starts=1024, gradient_steps=10, train_freq=10, **kwargs
+        self, policy: Type[Plan2ExplorePolicy], env: Env | VecEnv, learning_rate=1e-3, _init_setup_model=True, learning_starts=1024, gradient_steps=1, train_freq=1, **kwargs
     ):
         """Initialize the Algorithm."""
         super().__init__(policy, env, learning_rate, learning_starts=learning_starts, gradient_steps=gradient_steps, train_freq=train_freq, support_multi_env=True, **kwargs, sde_support=False)

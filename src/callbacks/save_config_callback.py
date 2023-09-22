@@ -43,11 +43,11 @@ class SaveConfigCallback(BaseCallback):
                 repo.delete_tag(tag_with_same_name[0])
             repo.create_tag(tag_name.replace(" ", "_"))
 
-            path = os.path.join(log_dir, "git_info")
-            branch = repo.active_branch
-            sha = repo.head.object.hexsha
-            with open(path, "w") as f:
-                f.write(f"{branch}+{sha}")
+            # path = os.path.join(log_dir, "git_info")
+            # branch = repo.active_branch
+            # sha = repo.head.object.hexsha
+            # with open(path, "w") as f:
+            #     f.write(f"{branch}+{sha}")
 
     def _on_step(self) -> bool:
         return super()._on_step()

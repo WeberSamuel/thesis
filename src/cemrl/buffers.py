@@ -52,7 +52,7 @@ class CEMRLReplayBuffer(DictReplayBuffer):
         self.dones = np.zeros(buffer_size, bool)
         self.goal_changes = np.zeros(buffer_size, bool)
         self.timeouts = np.zeros(buffer_size, bool)
-        self.grouped_goal_idx = None
+        self.idxs_by_goal = None
         self.use_bin_weighted_decoder_target_sampling = use_bin_weighted_decoder_target_sampling
 
     def size(self) -> int:
@@ -273,7 +273,7 @@ class CEMRLReplayBuffer(DictReplayBuffer):
         """
 
         if not self.is_decoder_index_build:
-            self._build_decoder_index()
+            self._build_decoder_index(num_decoder_targets)
             self.is_decoder_index_build = True
 
         indices = self._select_decoder_target_indices(base_indices, num_decoder_targets)
@@ -288,42 +288,41 @@ class CEMRLReplayBuffer(DictReplayBuffer):
 
     def _select_decoder_target_indices(self, indices: np.ndarray, num_decoder_targets: int) -> np.ndarray:
         group_ids = self.goal_idxs[indices]
-        selected_ids = (np.random.rand(len(indices), num_decoder_targets) * self.grouped_goal_sizes[group_ids, None]).astype(
-            int
-        )
-        indices = self.grouped_goal_idx[group_ids[:, None], selected_ids]  # type: ignore
+        selected_ids = (np.random.rand(len(indices), num_decoder_targets) * self.grouped_goal_sizes[group_ids, None])
+        selected_ids = selected_ids.astype(int)
+
+        indices = self.padded_idxs_by_goal[group_ids[:, None], selected_ids]  # type: ignore
         assert np.all(self.goal_idxs[indices] == self.goal_idxs[indices[:, 0]][:, None])
         return indices
 
-    def _build_decoder_index(self):
+    def _build_decoder_index(self, num_decoder_targets: int):
         df = pd.DataFrame({"goal_idx": self.goal_idxs})
         df = df[df.goal_idx != -1]
         groups = df.groupby(by=df.goal_idx)
-        self.grouped_goal_idx = groups.groups
+        self.idxs_by_goal = groups.groups
         self.grouped_goal_sizes = np.zeros(self.goal_idxs.max() + 1, dtype=int)
         self.grouped_goal_sizes[list(groups.groups.keys())] = groups.size().values
+        max_group_size = max(self.grouped_goal_sizes.max(), num_decoder_targets)
 
+        padded_idxs_by_goal = np.zeros((self.goal_idxs.max() + 1, max_group_size), dtype=int)
         if self.use_bin_weighted_decoder_target_sampling:
-            indices = self.valid_indices()
-            _, _, bin_index = binned_statistic_dd(self.observations[indices], indices, statistic="count", bins=10)
-            _, idx_to_unique, bin_stats = np.unique(bin_index, return_inverse=True, return_counts=True)
-            bin_stats = bin_stats.max() / bin_stats
-            bin_stats = bin_stats / bin_stats.sum()
-            weighted_bin_prob = np.zeros(self.buffer_size + self.explore_buffer_size, dtype=float)
-            weighted_bin_prob[indices] = bin_stats[idx_to_unique]
-
-            for k, v in self.grouped_goal_idx.items():
-                weights = weighted_bin_prob[v] / weighted_bin_prob[v].sum()  # type: ignore
-                self.grouped_goal_idx[k] = np.random.choice(v, len(v), p=weights)  # type: ignore
-
-        grouped_goal_idx = np.zeros((self.goal_idxs.max() + 1, self.grouped_goal_sizes.max() + 1), dtype=int)
-        for k, v in self.grouped_goal_idx.items():
-            grouped_goal_idx[k, : len(v)] = v
-        self.grouped_goal_idx = grouped_goal_idx
+            self.grouped_goal_sizes[:] = max_group_size
+            for k, v in self.idxs_by_goal.items():
+                count, _, bins = binned_statistic_dd(self.observations[v], v, statistic="count", expand_binnumbers=True) # type: ignore
+                weights = 1 / count[tuple(bins-1)] / np.count_nonzero(count)
+                padded_idxs_by_goal[k] = np.random.choice(v, max_group_size, p=weights)  # type: ignore
+        else:
+            for k, v in self.idxs_by_goal.items():
+                padded_idxs_by_goal[k, : len(v)] = v
+        self.padded_idxs_by_goal = padded_idxs_by_goal
+        
 
 
 class NoLinkingCemrlReplayBuffer(CEMRLReplayBuffer):
-    def _build_decoder_index(self):
+    def _build_decoder_index(self, num_decoder_targets: int):
+        super()._build_decoder_index(num_decoder_targets)
+
+
         self.episode_ends = np.zeros(self.buffer_size + self.explore_buffer_size, int)
         self.episode_starts = np.zeros(self.buffer_size + self.explore_buffer_size, int)
         self.episode_lengths = np.zeros(self.buffer_size + self.explore_buffer_size, int)
@@ -386,15 +385,14 @@ class NoLinkingCemrlReplayBuffer(CEMRLReplayBuffer):
         return ep_indices
 
 
-class EpisodeLinkingCemrlReplayBuffer(NoLinkingCemrlReplayBuffer):
+class EpisodeLinkingCemrlReplayBuffer(CEMRLReplayBuffer):
     def __init__(self, *args, num_linked_episodes=5, use_bin_weighted_decoder_target_sampling=False, **kwargs):
         super().__init__(*args, use_bin_weighted_decoder_target_sampling=use_bin_weighted_decoder_target_sampling, **kwargs)
         self.num_linked_episodes = num_linked_episodes
 
-    def _build_decoder_index(self):
-        self.episode_ends: np.ndarray
+    def _build_decoder_index(self, num_decoder_targets: int):
+        super()._build_decoder_index(num_decoder_targets)
         CEMRLReplayBuffer._build_decoder_index(self)  # type: ignore
-        super()._build_decoder_index()
 
     def _select_decoder_target_indices(self, indices: np.ndarray, num_decoder_targets: int) -> np.ndarray:
         linked_samples = CEMRLReplayBuffer._select_decoder_target_indices(self, indices, self.num_linked_episodes)

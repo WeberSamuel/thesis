@@ -28,9 +28,9 @@ class CEMRL(StateAwareOffPolicyAlgorithm):
         buffer_size: int = 1_000_000, # 20000,
         learning_starts: int = 1000,
         batch_size: int = 256,
-        train_freq: Union[int, Tuple[int, str]] = 10,
+        train_freq: Union[int, Tuple[int, str]] = 1,
         encoder_grad_steps: int = 50,
-        policy_grad_steps: int = 20,
+        policy_grad_steps: int = 40,
         action_noise: Optional[ActionNoise] = None,
         replay_buffer_class: Optional[Type[EpisodicReplayBuffer|CEMRLReplayBuffer|CemrlReplayBuffer]] = None,
         replay_buffer_kwargs: Optional[Dict[str, Any]] = None,
@@ -41,7 +41,7 @@ class CEMRL(StateAwareOffPolicyAlgorithm):
         device: Union[th.device, str] = "auto",
         monitor_wrapper: bool = True,
         seed: Optional[int] = None,
-        gradient_steps=10,
+        gradient_steps=1,
         _init_setup_model=True,
     ):
         super().__init__(

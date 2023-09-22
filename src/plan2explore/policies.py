@@ -103,24 +103,27 @@ class CEMRLExplorationPolicy(Plan2ExplorePolicy):
 
     def _predict(self, observation: Dict[str, th.Tensor], deterministic: bool = False) -> th.Tensor:  # type: ignore
         prev_observation = self.state  # type: ignore
+        next_obs = {}
+        for k, v in prev_observation.items():  # type:ignore
+            v: th.Tensor
+            next_obs[k] = v.clone()
+            next_obs[k][:, :-1] = v[:, 1:]
+            next_obs[k][:, -1] = observation[k]
 
         with th.no_grad():
-            _, z, state = self.encoder(
-                self.encoder.from_obs_to_encoder_input(prev_observation, observation),  # type: ignore
-                prev_observation["encoder_state"].transpose(1,0), # type: ignore
+            y, z, encoder_state = self.encoder(
+                self.encoder.from_obs_to_encoder_input(prev_observation, next_obs)
             )
 
-        self.state = observation
-        observation["encoder_state"] = state.transpose(1,0)
+        self.state = next_obs
         return super()._predict(observation["observation"], deterministic, z=z)
 
     def _reset_states(self, size: int) -> dict[str, th.Tensor | np.ndarray] | Tuple[np.ndarray | th.Tensor, ...]:
         state = apply_function_to_type(
             self.observation_space.sample(),
             np.ndarray,
-            lambda x: th.zeros((size, *x.shape), device=self.device),
+            lambda x: th.zeros((size, 30, *x.shape), device=self.device),
         )
-        state["encoder_state"] = th.zeros((size, self.encoder.num_classes, self.encoder.encoder_state_dim), device=self.device)
         return state
 
 
