@@ -52,6 +52,8 @@ class CemrlTrainingConfig:
     num_decoder_targets: int = 400
     encoder_context_length: int = 30
 
+    imagination_horizon: int = 16
+
 @dataclass
 class CemrlConfig:
     task_inference: TaskInferenceConfig = lazy_instance(TaskInferenceConfig)

@@ -7,14 +7,17 @@ from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.noise import ActionNoise
 from stable_baselines3.common.off_policy_algorithm import OffPolicyAlgorithm
 from stable_baselines3.common.type_aliases import GymEnv, MaybeCallback, Schedule
-from src.cemrl.trainer import train_encoder
 from src.cemrl.buffers import CEMRLReplayBuffer
 from src.cemrl.policies import CEMRLPolicy
 from src.core.state_aware_algorithm import StateAwareOffPolicyAlgorithm
+from stable_baselines3.common.policies import BasePolicy
 from .config import CemrlConfig
 from stable_baselines3.common.vec_env import VecEnv
 from stable_baselines3.sac import SAC
 from src.cemrl.wrappers.cemrl_policy_wrapper import CEMRLPolicyVecWrapper, CEMRLPolicyWrapper
+from stable_baselines3.common.type_aliases import DictReplayBufferSamples
+from .types import CEMRLPolicyInput
+from .buffers import ImagineBuffer
 
 
 class CEMRL(StateAwareOffPolicyAlgorithm):
@@ -44,7 +47,7 @@ class CEMRL(StateAwareOffPolicyAlgorithm):
         seed: Optional[int] = None,
         gradient_steps=1,
         sub_policy_algorithm_class: Type[OffPolicyAlgorithm] = SAC,
-        sub_policy_algorithm_kwargs: Dict[str, Any] = None,
+        sub_policy_algorithm_kwargs: Dict[str, Any] | None = None,
         _init_setup_model=True,
         **kwargs,
     ):
@@ -71,7 +74,7 @@ class CEMRL(StateAwareOffPolicyAlgorithm):
             sde_support=False,
             **kwargs,
         )
-        config = self.policy_kwargs.get("config", CemrlConfig())
+        config: CemrlConfig = self.policy_kwargs.get("config", CemrlConfig())
 
         # setup sub policy algorithm
         self._setup_sub_policy(env, sub_policy_algorithm_class, sub_policy_algorithm_kwargs, config)
@@ -131,8 +134,22 @@ class CEMRL(StateAwareOffPolicyAlgorithm):
                 for k, v in metrics.items():
                     self.logger.record_mean("reconstruction/" + k, v)
 
+            if self.config.imagination_horizon == 0:
+                self.sub_policy_algorithm.replay_buffer = self.replay_buffer
+            else:
+                self.sub_policy_algorithm.replay_buffer = ImagineBuffer(
+                    self.config.imagination_horizon,
+                    self.policy,
+                    self.replay_buffer,
+                    self.policy.task_inference.decoder,
+                    self.config.policy_gradient_steps,
+                    self.sub_policy_algorithm.batch_size,
+                    self.action_space, # type: ignore
+                    self.get_vec_normalize_env(),
+                ) # type: ignore
             self.sub_policy_algorithm.train(self.config.policy_gradient_steps, batch_size)
+            
         self.dump_logs_if_neccessary()
 
     def _excluded_save_params(self) -> List[str]:
-        return super()._excluded_save_params() + ["extension"]
+        return super()._excluded_save_params() + ["sub_policy_algorithm"]

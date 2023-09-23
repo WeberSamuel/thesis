@@ -7,10 +7,12 @@ from gymnasium import Space, spaces
 from stable_baselines3.common.buffers import DictReplayBuffer
 from stable_baselines3.common.type_aliases import DictReplayBufferSamples, ReplayBufferSamples
 from stable_baselines3.common.vec_env import VecNormalize
+from stable_baselines3.common.policies import BasePolicy
 from scipy.stats import binned_statistic_dd
 
 from src.cemrl.types import CEMRLObsTensorDict, CEMRLPolicyInput
 from .task_inference import EncoderInput, TaskInference
+from .types import CEMRLPolicyInput
 
 
 class CEMRLReplayBuffer(DictReplayBuffer):
@@ -406,3 +408,53 @@ class EpisodeLinkingCemrlReplayBuffer(NoLinkingCemrlReplayBuffer):
         indices = task_episode_indices.reshape(len(linked_samples), -1)
         assert np.all(self.goal_idxs[indices] == self.goal_idxs[indices][:, 0, None])
         return indices
+
+
+class ImagineBuffer:
+    def __init__(
+        self,
+        imagine_horizon: int,
+        policy: BasePolicy,
+        replay_buffer: DictReplayBuffer,
+        world_model: th.nn.Module,
+        num_batches: int,
+        batch_size: int,
+        action_space: spaces.Box,
+        env: VecNormalize | None,
+    ) -> None:
+        self.storage = []
+
+        low = th.tensor(action_space.low, device=replay_buffer.device)
+        high = th.tensor(action_space.high, device=replay_buffer.device)
+
+        def scale_action(action: th.Tensor):
+            return 2.0 * ((action - low) / (high - low)) - 1.0
+
+        for _ in range(num_batches):
+            samples = replay_buffer.sample(batch_size, env)
+            state = samples.observations["observation"]
+            task_indicator = samples.observations["task_indicator"]
+            with th.no_grad():
+                for _ in range(imagine_horizon):
+                    action = policy._predict(state, deterministic=True)
+                    action = scale_action(action)
+                    next_state, reward = world_model(state, action, None, z=task_indicator)
+                    self.storage.append((state, action, reward, next_state, task_indicator))
+                    state = next_state
+
+    def sample(self, batch_size: int):
+        idxs = th.randint(0, len(self.storage), (batch_size,), device=self.storage[0][0].device)
+        samples = [self.storage[i] for i in idxs]
+        return DictReplayBufferSamples(
+            observations=CEMRLPolicyInput(
+                observation=th.cat([s[0] for s in samples], dim=0),
+                task_indicator=th.cat([s[4] for s in samples], dim=0),
+            ),  # type: ignore
+            next_observations=CEMRLPolicyInput(
+                observation=th.cat([s[3] for s in samples], dim=0),
+                task_indicator=th.cat([s[4] for s in samples], dim=0),
+            ),  # type: ignore
+            actions=th.cat([s[1] for s in samples], dim=0),
+            rewards=th.cat([s[2] for s in samples], dim=0),
+            dones=th.zeros((len(samples), 1), device=samples[0][0].device),
+        )
