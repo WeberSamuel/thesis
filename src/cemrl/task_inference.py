@@ -40,8 +40,8 @@ class StatePreprocessor(th.nn.Module):
 class EncoderInput(NamedTuple):
     obs: th.Tensor
     action: th.Tensor
-    next_obs: th.Tensor
     reward: th.Tensor
+    next_obs: th.Tensor
 
 
 class Encoder(DeviceAwareModuleMixin, th.nn.Module):
@@ -263,26 +263,26 @@ class TaskInference(DeviceAwareModuleMixin, th.nn.Module):
         decoder_action = decoder_context.actions
         decoder_state = decoder_context.observations
         decoder_next_state = decoder_context.next_observations
-        decoder_reward = decoder_context.rewards
+        reward_target = decoder_context.rewards
 
         if not config.reconstruct_all_steps:
             # Reconstruct only the current timestep
             decoder_action = decoder_action[:, -1, :]
             decoder_state = decoder_state[:, -1, :]
             decoder_next_state = decoder_next_state[:, -1, :]
-            decoder_reward = decoder_reward[:, -1, :]
+            reward_target = reward_target[:, -1, :]
 
         if config.use_state_diff:
-            decoder_state_target = decoder_next_state - decoder_state
+            state_target = decoder_next_state - decoder_state
         else:
-            decoder_state_target = decoder_next_state
+            state_target = decoder_next_state
 
         # Forward pass through encoder
         enc_input = EncoderInput(
             obs=encoder_context.observations,
             action=encoder_context.actions,
-            next_obs=encoder_context.next_observations,
             reward=encoder_context.rewards,
+            next_obs=encoder_context.next_observations,
         )
         y_distribution, z_distributions, _ = self.encoder.encode(enc_input)
         if config.alpha_kl_z_query is not None:
@@ -290,8 +290,8 @@ class TaskInference(DeviceAwareModuleMixin, th.nn.Module):
                 EncoderInput(
                     obs=decoder_context.observations,
                     action=decoder_context.actions,
-                    next_obs=decoder_context.next_observations,
                     reward=decoder_context.rewards,
+                    next_obs=decoder_context.next_observations,
                 )
             )
             kl_qz_qz_query = th.zeros(batch_size, self.config.encoder.num_classes, device=self.device)
@@ -311,14 +311,14 @@ class TaskInference(DeviceAwareModuleMixin, th.nn.Module):
                 z = z.unsqueeze(1).repeat(1, decoder_state.shape[1], 1)
 
             # put in decoder to get likelihood
-            state_estimate, reward_estimate = self.decoder(decoder_state, decoder_action, decoder_next_state, z)
-            reward_loss = th.sum((reward_estimate - decoder_reward) ** 2, dim=-1)
+            (*_, state_estimate), (*_, reward_estimate) = self.decoder(decoder_state, decoder_action, decoder_next_state, z)
+            reward_loss = th.sum((reward_estimate - reward_target) ** 2, dim=-1)
             if config.reconstruct_all_steps:
                 reward_loss = th.mean(reward_loss, dim=1)
             reward_losses[:, y] = reward_loss
 
             if self.config.decoder.use_state_decoder:
-                state_loss = th.sum((state_estimate - decoder_state_target) ** 2, dim=-1)
+                state_loss = th.sum((state_estimate - state_target) ** 2, dim=-1)
                 if config.reconstruct_all_steps:
                     state_loss = th.mean(state_loss, dim=1)
                 state_losses[:, y] = state_loss

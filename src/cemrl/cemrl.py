@@ -121,6 +121,7 @@ class CEMRL(StateAwareOffPolicyAlgorithm):
             gradient_steps (int): How often the training should be applied
             batch_size (int): Batch size used in the training
         """
+        self.policy.set_training_mode(True)
         for _ in range(gradient_steps):
             for _ in range(self.config.task_inference_gradient_steps):
                 metrics = self.policy.task_inference.training_step(

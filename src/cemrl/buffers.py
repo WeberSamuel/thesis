@@ -10,12 +10,14 @@ from stable_baselines3.common.vec_env import VecNormalize
 from scipy.stats import binned_statistic_dd
 
 from src.cemrl.types import CEMRLObsTensorDict, CEMRLPolicyInput
-from .task_inference import TaskInference
+from .task_inference import EncoderInput, TaskInference
+
 
 class CEMRLReplayBuffer(DictReplayBuffer):
     """Replay buffer used in CEMRL."""
 
     task_inference: TaskInference
+
     def __init__(
         self,
         buffer_size: int,
@@ -32,7 +34,6 @@ class CEMRLReplayBuffer(DictReplayBuffer):
         buffer_size = buffer_size - buffer_size % n_envs
         super().__init__(buffer_size, observation_space, action_space, n_envs=n_envs, **kwargs)
         self.buffer_size = buffer_size
-        self.encoder = encoder
 
         # Trick to include exploration data in the buffer
         self.explore_buffer_size = exploration_buffer_size - exploration_buffer_size % self.n_envs
@@ -74,12 +75,16 @@ class CEMRLReplayBuffer(DictReplayBuffer):
         return self.explore_buffer_size if self.explore_full else self.explore_pos - self.buffer_size
 
     def cemrl_sample(
-        self, batch_size: int, env: VecNormalize | None = None, encoder_window: int|None = None, decoder_samples: int|None = None
+        self,
+        batch_size: int,
+        env: VecNormalize | None = None,
+        encoder_window: int | None = None,
+        decoder_samples: int | None = None,
     ) -> tuple[ReplayBufferSamples, ReplayBufferSamples]:
         encoder_window = encoder_window or self.encoder_window
         decoder_samples = decoder_samples or self.num_decoder_targets
         batch_inds = np.random.choice(self.valid_indices(), batch_size)
-        encoder_input:ReplayBufferSamples = self.get_encoder_context(batch_inds, env, encoder_window) # type:ignore
+        encoder_input: ReplayBufferSamples = self.get_encoder_context(batch_inds, env, encoder_window)  # type:ignore
         dec_samples = self.get_decoder_targets(batch_inds, env, decoder_samples)
 
         return encoder_input, dec_samples
@@ -197,12 +202,16 @@ class CEMRLReplayBuffer(DictReplayBuffer):
         Returns:
             DictReplayBufferSamples: A dictionary of tensors containing the sampled transitions.
         """
-        assert self.encoder is not None
         indices = np.random.choice(self.valid_indices(), batch_size)
         encoder_context: ReplayBufferSamples = self.get_encoder_context(indices, env)
         with th.no_grad():
-            _, z, _ = self.encoder(
-                th.cat([encoder_context.next_observations[:, :-1], encoder_context.actions[:, 1:], encoder_context.rewards[:, 1:], encoder_context.next_observations[:, 1:]], dim=-1)
+            _, z, _ = self.task_inference(
+                EncoderInput(
+                    obs=encoder_context.observations,
+                    action=encoder_context.actions,
+                    reward=encoder_context.rewards,
+                    next_obs=encoder_context.next_observations,
+                )
             )
 
         obs = self.to_torch(self._normalize_obs(self.observations[indices], env))  # type: ignore
@@ -287,7 +296,7 @@ class CEMRLReplayBuffer(DictReplayBuffer):
 
     def _select_decoder_target_indices(self, indices: np.ndarray, num_decoder_targets: int) -> np.ndarray:
         group_ids = self.goal_idxs[indices]
-        selected_ids = (np.random.rand(len(indices), num_decoder_targets) * self.grouped_goal_sizes[group_ids, None])
+        selected_ids = np.random.rand(len(indices), num_decoder_targets) * self.grouped_goal_sizes[group_ids, None]
         selected_ids = selected_ids.astype(int)
 
         indices = self.padded_idxs_by_goal[group_ids[:, None], selected_ids]  # type: ignore
@@ -307,14 +316,13 @@ class CEMRLReplayBuffer(DictReplayBuffer):
         if self.use_bin_weighted_decoder_target_sampling:
             self.grouped_goal_sizes[:] = max_group_size
             for k, v in self.idxs_by_goal.items():
-                count, _, bins = binned_statistic_dd(self.observations[v], v, statistic="count", expand_binnumbers=True) # type: ignore
-                weights = 1 / count[tuple(bins-1)] / np.count_nonzero(count)
+                count, _, bins = binned_statistic_dd(self.observations[v], v, statistic="count", expand_binnumbers=True)  # type: ignore
+                weights = 1 / count[tuple(bins - 1)] / np.count_nonzero(count)
                 padded_idxs_by_goal[k] = np.random.choice(v, max_group_size, p=weights)  # type: ignore
         else:
             for k, v in self.idxs_by_goal.items():
                 padded_idxs_by_goal[k, : len(v)] = v
         self.padded_idxs_by_goal = padded_idxs_by_goal
-        
 
 
 class NoLinkingCemrlReplayBuffer(CEMRLReplayBuffer):
