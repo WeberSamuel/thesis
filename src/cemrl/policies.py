@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Any, Optional
 from gymnasium import spaces
 import numpy as np
 import torch as th
@@ -33,28 +33,32 @@ class CEMRLPolicy(StateAwarePolicy):
         self,
         observation: CEMRLObsTensorDict,
         deterministic: bool = False,
+        task_encoding: Optional[th.Tensor] = None,
     ) -> th.Tensor:
-        prev_observation: CEMRLObsTensorDict = self.state  # type: ignore
-        next_obs: CEMRLObsTensorDict = {}
-        for k, v in prev_observation.items():  # type:ignore
-            v: th.Tensor
-            next_obs[k] = v.clone()
-            next_obs[k][:, :-1] = v[:, 1:]
-            next_obs[k][:, -1] = observation[k]
+        if task_encoding is None:
+            prev_observation: CEMRLObsTensorDict = self.state  # type: ignore
+            next_obs: CEMRLObsTensorDict = {}
+            for k, v in prev_observation.items():  # type:ignore
+                v: th.Tensor
+                next_obs[k] = v.clone()
+                next_obs[k][:, :-1] = v[:, 1:]
+                next_obs[k][:, -1] = observation[k]
 
-        with th.no_grad():
-            y, z, encoder_state = self.task_inference.forward(
-                EncoderInput(
-                    obs=prev_observation["observation"],
-                    next_obs=next_obs["observation"],
-                    action=next_obs["action"],
-                    reward=next_obs["reward"],
+            with th.no_grad():
+                y, z, encoder_state = self.task_inference.forward(
+                    EncoderInput(
+                        obs=prev_observation["observation"],
+                        next_obs=next_obs["observation"],
+                        action=next_obs["action"],
+                        reward=next_obs["reward"],
+                    )
                 )
-            )
+            self.state = next_obs
+        else:
+            z = task_encoding
+
         policy_obs = CEMRLPolicyInput(observation=observation["observation"], task_indicator=z)
         action = self.sub_policy._predict(policy_obs, deterministic)  # type: ignore
-
-        self.state = next_obs
         return action
 
     def _reset_states(self, size: int) -> tuple[np.ndarray, ...]:

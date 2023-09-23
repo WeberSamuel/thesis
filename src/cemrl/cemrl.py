@@ -141,7 +141,7 @@ class CEMRL(StateAwareOffPolicyAlgorithm):
                     self.config.imagination_horizon,
                     self.policy,
                     self.replay_buffer,
-                    self.policy.task_inference.decoder,
+                    self.policy.task_inference.decoder.ensemble[0], # using only one ensemble member for now
                     self.config.policy_gradient_steps,
                     self.sub_policy_algorithm.batch_size,
                     self.action_space, # type: ignore

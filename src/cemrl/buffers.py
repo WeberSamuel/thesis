@@ -422,7 +422,7 @@ class ImagineBuffer:
         action_space: spaces.Box,
         env: VecNormalize | None,
     ) -> None:
-        self.storage = []
+        storage = []
 
         low = th.tensor(action_space.low, device=replay_buffer.device)
         high = th.tensor(action_space.high, device=replay_buffer.device)
@@ -436,25 +436,31 @@ class ImagineBuffer:
             task_indicator = samples.observations["task_indicator"]
             with th.no_grad():
                 for _ in range(imagine_horizon):
-                    action = policy._predict(state, deterministic=True)
+                    action = policy._predict({"observation": state}, deterministic=True, task_encoding=task_indicator)
                     action = scale_action(action)
                     next_state, reward = world_model(state, action, None, z=task_indicator)
-                    self.storage.append((state, action, reward, next_state, task_indicator))
+                    storage.append((state, action, reward, next_state, task_indicator))
                     state = next_state
+        obs, action, reward, next_obs, task_indicator = zip(*storage)
+        self.obs = th.cat(obs, dim=0)
+        self.action = th.cat(action, dim=0)
+        self.reward = th.cat(reward, dim=0)
+        self.next_obs = th.cat(next_obs, dim=0)
+        self.task_indicator = th.cat(task_indicator, dim=0)
 
-    def sample(self, batch_size: int):
-        idxs = th.randint(0, len(self.storage), (batch_size,), device=self.storage[0][0].device)
-        samples = [self.storage[i] for i in idxs]
+    def sample(self, batch_size: int, **kwargs):
+        idxs = th.randint(0, len(self.obs), (batch_size,), device=self.obs.device)
+
         return DictReplayBufferSamples(
             observations=CEMRLPolicyInput(
-                observation=th.cat([s[0] for s in samples], dim=0),
-                task_indicator=th.cat([s[4] for s in samples], dim=0),
+                observation=self.obs[idxs],
+                task_indicator=self.task_indicator[idxs],
             ),  # type: ignore
             next_observations=CEMRLPolicyInput(
-                observation=th.cat([s[3] for s in samples], dim=0),
-                task_indicator=th.cat([s[4] for s in samples], dim=0),
+                observation=self.next_obs[idxs],
+                task_indicator=self.task_indicator[idxs],
             ),  # type: ignore
-            actions=th.cat([s[1] for s in samples], dim=0),
-            rewards=th.cat([s[2] for s in samples], dim=0),
-            dones=th.zeros((len(samples), 1), device=samples[0][0].device),
+            actions=self.action[idxs],
+            rewards=self.reward[idxs],
+            dones=th.zeros(batch_size, 1, device=self.obs.device)
         )

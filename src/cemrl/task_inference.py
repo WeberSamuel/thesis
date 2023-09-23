@@ -218,7 +218,7 @@ class TaskInference(DeviceAwareModuleMixin, th.nn.Module):
         obs_dim: int,
         action_dim: int,
         config: TaskInferenceConfig,
-        decoder: th.nn.Module | None = None,
+        decoder: Ensemble | None = None,
     ) -> None:
         super().__init__()
         self.config = config
@@ -311,14 +311,16 @@ class TaskInference(DeviceAwareModuleMixin, th.nn.Module):
                 z = z.unsqueeze(1).repeat(1, decoder_state.shape[1], 1)
 
             # put in decoder to get likelihood
-            (*_, state_estimate), (*_, reward_estimate) = self.decoder(decoder_state, decoder_action, decoder_next_state, z)
-            reward_loss = th.sum((reward_estimate - reward_target) ** 2, dim=-1)
+            state_estimate, reward_estimate = self.decoder(decoder_state, decoder_action, decoder_next_state, z, return_raw=True)
+            reward_loss = th.sum((reward_estimate - reward_target[None]) ** 2, dim=-1)
+            reward_loss = th.mean(reward_loss, dim=0)
             if config.reconstruct_all_steps:
                 reward_loss = th.mean(reward_loss, dim=1)
             reward_losses[:, y] = reward_loss
 
             if self.config.decoder.use_state_decoder:
-                state_loss = th.sum((state_estimate - state_target) ** 2, dim=-1)
+                state_loss = th.sum((state_estimate - state_target[None]) ** 2, dim=-1)
+                state_loss = th.mean(state_loss, dim=0)
                 if config.reconstruct_all_steps:
                     state_loss = th.mean(state_loss, dim=1)
                 state_losses[:, y] = state_loss
