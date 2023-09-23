@@ -1,4 +1,7 @@
 main:
   policy:
     init_args:
-      latent_dim: 2
+      config:
+        task_inference:
+          encoder:
+            latent_dim: 2

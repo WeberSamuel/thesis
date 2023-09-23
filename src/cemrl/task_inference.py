@@ -4,8 +4,9 @@ import torch as th
 from stable_baselines3.common.type_aliases import ReplayBufferSamples
 from torch.distributions import Categorical, Normal, kl
 
-from ..core.module import BaseModule
-from ..core.utils import build_network
+from src.plan2explore.networks import Ensemble
+
+from ..utils import build_network, DeviceAwareModuleMixin
 from .config import DecoderConfig, EncoderConfig, TaskInferenceConfig
 
 REWARD_DIM = 1
@@ -26,11 +27,9 @@ class StatePreprocessor(th.nn.Module):
         if state_preprocessing_dim != 0:
             hidden_dim = int(net_complex_enc_dec * state_dim)
             if simplified_state_preprocessor:
-                self.layers = th.nn.Linear(state_dim, state_preprocessing_dim)
+                self.layers = build_network(state_dim, [], th.nn.Identity, state_preprocessing_dim)
             else:
-                self.layers = th.nn.Sequential(
-                    th.nn.Linear(state_dim, hidden_dim), th.nn.ReLU(), th.nn.Linear(hidden_dim, state_preprocessing_dim)
-                )
+                self.layers = build_network(state_dim, [hidden_dim], th.nn.ReLU, state_preprocessing_dim)
         else:
             self.layers = th.nn.Identity()
 
@@ -45,7 +44,7 @@ class EncoderInput(NamedTuple):
     reward: th.Tensor
 
 
-class Encoder(BaseModule):
+class Encoder(DeviceAwareModuleMixin, th.nn.Module):
     def __init__(self, state_size: int, action_size: int, config: EncoderConfig):
         super().__init__()
         self.config = config
@@ -74,16 +73,16 @@ class Encoder(BaseModule):
                  y - base task indicator [batch_size]
         """
         y_distribution, z_distributions, encoder_state = self.encode(x, encoder_state=encoder_state)
-        z, y = self.sample_z(y_distribution, z_distributions, y_usage="most_likely", sampler="mean")
+        y, z = self.sample_z(y_distribution, z_distributions, y_usage="most_likely", sampler="mean")
         if return_distributions:
             distribution = {
                 "y_probs": y_distribution.probs.detach().cpu().numpy().squeeze(),  # type: ignore
                 "z_means": [z.loc.detach().cpu().numpy().squeeze() for z in z_distributions],
                 "z_stds": [z.scale.detach().cpu().numpy().squeeze() for z in z_distributions],
             }
-            return z, y, distribution, encoder_state
+            return y, z, distribution, encoder_state
         else:
-            return z, y, encoder_state
+            return y, z, encoder_state
 
     def encode(self, x: EncoderInput, encoder_state=None):
         # Compute shared encoder forward pass
@@ -150,7 +149,7 @@ class Encoder(BaseModule):
         # tensor with shape [batch, class, latent]
         permute = sampled.permute(1, 0, 2)
         z = th.squeeze(th.gather(permute, 1, mask), 1)
-        return z, y
+        return y, z
 
 
 class Decoder(th.nn.Module):
@@ -191,9 +190,8 @@ class Decoder(th.nn.Module):
             activation=config.activation,
         )
 
-    def forward(self, state, action, next_state, z):
+    def forward(self, state:th.Tensor, action:th.Tensor, next_state:th.Tensor|None, z:th.Tensor):
         state = self.state_preprocessor(state)
-        next_state = self.state_preprocessor(next_state)
         if self.config.use_state_decoder:
             assert self.net_state_decoder is not None
             state_estimate = self.net_state_decoder(th.cat([state, action, z], dim=-1))
@@ -201,14 +199,20 @@ class Decoder(th.nn.Module):
             state_estimate = None
 
         if self.config.use_next_state_for_reward:
-            reward_estimate = self.net_reward_decoder(th.cat([state, action, next_state, z], dim=-1))
+            if next_state is not None:
+                next_state = self.state_preprocessor(next_state)
+            elif state_estimate is not None:
+                next_state = state_estimate
+            else:
+                raise RuntimeError("No next state available, but use next state for reward is set")
+            reward_estimate = self.net_reward_decoder(th.cat([state, action, next_state, z], dim=-1)) # type: ignore
         else:
             reward_estimate = self.net_reward_decoder(th.cat([state, action, z], dim=-1))
 
         return state_estimate, reward_estimate
 
 
-class TaskInference(BaseModule):
+class TaskInference(DeviceAwareModuleMixin, th.nn.Module):
     def __init__(
         self,
         obs_dim: int,
@@ -219,12 +223,19 @@ class TaskInference(BaseModule):
         super().__init__()
         self.config = config
         self.encoder = Encoder(state_size=obs_dim, action_size=action_dim, config=config.encoder)
-        self.decoder = decoder or Decoder(
-            state_size=obs_dim,
-            action_size=action_dim,
-            z_size=config.encoder.latent_dim,
-            state_preprocessor=self.encoder.state_preprocessor,
-            config=config.decoder,
+        self.decoder = decoder or Ensemble(
+            th.nn.ModuleList(
+                [
+                    Decoder(
+                        state_size=obs_dim,
+                        action_size=action_dim,
+                        z_size=config.encoder.latent_dim,
+                        state_preprocessor=self.encoder.state_preprocessor,
+                        config=config.decoder,
+                    )
+                    for i in range(self.config.decoder.ensemble_size)
+                ]
+            )
         )
         self.prior_pz_layer = th.nn.Linear(config.encoder.num_classes, config.encoder.latent_dim * 2)
 
@@ -295,7 +306,7 @@ class TaskInference(BaseModule):
 
         # every y component (see ELBO formula)
         for y in range(self.config.encoder.num_classes):
-            z, _ = self.encoder.sample_z(y_distribution, z_distributions, y_usage="specific", y=y)
+            _, z = self.encoder.sample_z(y_distribution, z_distributions, y_usage="specific", y=y)
             if config.reconstruct_all_steps:
                 z = z.unsqueeze(1).repeat(1, decoder_state.shape[1], 1)
 

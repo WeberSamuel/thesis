@@ -8,31 +8,32 @@ from stable_baselines3.common.noise import ActionNoise
 from stable_baselines3.common.off_policy_algorithm import OffPolicyAlgorithm
 from stable_baselines3.common.type_aliases import GymEnv, MaybeCallback, Schedule
 from src.cemrl.trainer import train_encoder
-from src.cemrl.buffers2 import CemrlReplayBuffer
-from src.cemrl.buffers1 import EpisodicReplayBuffer
 from src.cemrl.buffers import CEMRLReplayBuffer
 from src.cemrl.policies import CEMRLPolicy
-from src.cli import DummyPolicy
 from src.core.state_aware_algorithm import StateAwareOffPolicyAlgorithm
+from .config import CemrlConfig
+from stable_baselines3.common.vec_env import VecEnv
+from stable_baselines3.sac import SAC
+from src.cemrl.wrappers.cemrl_policy_wrapper import CEMRLPolicyVecWrapper, CEMRLPolicyWrapper
 
 
 class CEMRL(StateAwareOffPolicyAlgorithm):
     """CEMRL algorithm."""
 
+    replay_buffer: CEMRLReplayBuffer
+    policy: CEMRLPolicy
+
     def __init__(
         self,
-        policy: CEMRLPolicy,
+        policy: Type[CEMRLPolicy],
         env: Union[GymEnv, str],
-        decoder_samples: int = 400,
         learning_rate: Union[float, Schedule] = 1e-3,
-        buffer_size: int = 1_000_000, # 20000,
+        buffer_size: int = 1_000_000,  # 20000,
         learning_starts: int = 1000,
         batch_size: int = 256,
         train_freq: Union[int, Tuple[int, str]] = 1,
-        encoder_grad_steps: int = 50,
-        policy_grad_steps: int = 40,
         action_noise: Optional[ActionNoise] = None,
-        replay_buffer_class: Optional[Type[EpisodicReplayBuffer|CEMRLReplayBuffer|CemrlReplayBuffer]] = None,
+        replay_buffer_class: Optional[Type[CEMRLReplayBuffer]] = None,
         replay_buffer_kwargs: Optional[Dict[str, Any]] = None,
         optimize_memory_usage: bool = False,
         stats_window_size: int = 100,
@@ -42,10 +43,13 @@ class CEMRL(StateAwareOffPolicyAlgorithm):
         monitor_wrapper: bool = True,
         seed: Optional[int] = None,
         gradient_steps=1,
+        sub_policy_algorithm_class: Type[OffPolicyAlgorithm] = SAC,
+        sub_policy_algorithm_kwargs: Dict[str, Any] = None,
         _init_setup_model=True,
+        **kwargs,
     ):
         super().__init__(
-            DummyPolicy,
+            policy,
             env=env,
             learning_rate=learning_rate,
             buffer_size=buffer_size,
@@ -54,7 +58,7 @@ class CEMRL(StateAwareOffPolicyAlgorithm):
             train_freq=train_freq,
             gradient_steps=gradient_steps,
             action_noise=action_noise,
-            replay_buffer_class=replay_buffer_class or EpisodicReplayBuffer,
+            replay_buffer_class=replay_buffer_class or CEMRLReplayBuffer,
             replay_buffer_kwargs=replay_buffer_kwargs,
             optimize_memory_usage=optimize_memory_usage,
             stats_window_size=stats_window_size,
@@ -65,17 +69,33 @@ class CEMRL(StateAwareOffPolicyAlgorithm):
             seed=seed,
             support_multi_env=True,
             sde_support=False,
+            **kwargs,
         )
-        self.decoder_samples = decoder_samples
-        self.encoder_grad_steps = encoder_grad_steps
-        self.policy_grad_steps = policy_grad_steps
+        config = self.policy_kwargs.get("config", CemrlConfig())
 
-        self.replay_buffer_kwargs["encoder"] = policy.encoder
+        # setup sub policy algorithm
+        self._setup_sub_policy(env, sub_policy_algorithm_class, sub_policy_algorithm_kwargs, config)
+
+        self.replay_buffer_kwargs.setdefault("encoder_window", config.training.encoder_context_length)
+        self.replay_buffer_kwargs.setdefault("num_decoder_targets", config.training.num_decoder_targets)
+        self.config = config.training
+
         if _init_setup_model:
             self._setup_model()
-        self.policy: CEMRLPolicy = policy.to(self.device)
-        self.policy.sub_policy_algorithm.replay_buffer = self.replay_buffer
-        self.replay_buffer: EpisodicReplayBuffer|CEMRLReplayBuffer|CemrlReplayBuffer
+
+        self.replay_buffer.task_inference = self.policy.task_inference
+        self.sub_policy_algorithm.replay_buffer = self.replay_buffer
+
+    def _setup_sub_policy(
+        self, env, sub_policy_algorithm_class: type[OffPolicyAlgorithm], sub_policy_algorithm_kwargs, config: CemrlConfig
+    ):
+        sub_policy_algorithm_kwargs = sub_policy_algorithm_kwargs or {}
+        latent_dim = config.task_inference.encoder.latent_dim
+        wrapper = CEMRLPolicyVecWrapper(env, latent_dim) if isinstance(env, VecEnv) else CEMRLPolicyWrapper(env, latent_dim)
+        self.sub_policy_algorithm = sub_policy_algorithm_class(
+            "MultiInputPolicy", wrapper, buffer_size=0, **sub_policy_algorithm_kwargs
+        )
+        self.policy_kwargs.setdefault("sub_policy", self.sub_policy_algorithm.policy)
 
     def _setup_learn(
         self,
@@ -86,8 +106,8 @@ class CEMRL(StateAwareOffPolicyAlgorithm):
         progress_bar: bool = False,
     ) -> Tuple[int, BaseCallback]:
         result = super()._setup_learn(total_timesteps, callback, reset_num_timesteps, tb_log_name, progress_bar)
-        self.policy.sub_policy_algorithm.replay_buffer = self.replay_buffer
-        self.policy.sub_policy_algorithm.set_logger(self.logger)
+        self.sub_policy_algorithm.replay_buffer = self.replay_buffer
+        self.sub_policy_algorithm.set_logger(self.logger)
         return result
 
     def train(self, gradient_steps: int, batch_size: int) -> None:
@@ -102,13 +122,15 @@ class CEMRL(StateAwareOffPolicyAlgorithm):
             batch_size (int): Batch size used in the training
         """
         for _ in range(gradient_steps):
-            for _ in range(self.encoder_grad_steps):
-                loss, metrics = train_encoder(self.policy.encoder, self.policy.decoder, *self.replay_buffer.cemrl_sample(batch_size, self.get_vec_normalize_env()), self.policy.optimizer)
+            for _ in range(self.config.task_inference_gradient_steps):
+                metrics = self.policy.task_inference.training_step(
+                    *self.replay_buffer.cemrl_sample(batch_size, self.get_vec_normalize_env())
+                )
 
-                for k,v in metrics.items():
-                    self.logger.record_mean("reconstruction/"+k, v.item())
+                for k, v in metrics.items():
+                    self.logger.record_mean("reconstruction/" + k, v)
 
-            self.policy.sub_policy_algorithm.train(self.policy_grad_steps, batch_size)
+            self.sub_policy_algorithm.train(self.config.policy_gradient_steps, batch_size)
         self.dump_logs_if_neccessary()
 
     def _excluded_save_params(self) -> List[str]:

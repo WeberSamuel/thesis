@@ -10,11 +10,12 @@ from stable_baselines3.common.vec_env import VecNormalize
 from scipy.stats import binned_statistic_dd
 
 from src.cemrl.types import CEMRLObsTensorDict, CEMRLPolicyInput
-
+from .task_inference import TaskInference
 
 class CEMRLReplayBuffer(DictReplayBuffer):
     """Replay buffer used in CEMRL."""
 
+    task_inference: TaskInference
     def __init__(
         self,
         buffer_size: int,
@@ -24,6 +25,8 @@ class CEMRLReplayBuffer(DictReplayBuffer):
         exploration_buffer_size: int = 1_000_000,
         n_envs=1,
         use_bin_weighted_decoder_target_sampling: bool = True,
+        encoder_window: int = 30,
+        num_decoder_targets: int = 400,
         **kwargs,
     ):
         buffer_size = buffer_size - buffer_size % n_envs
@@ -55,6 +58,9 @@ class CEMRLReplayBuffer(DictReplayBuffer):
         self.idxs_by_goal = None
         self.use_bin_weighted_decoder_target_sampling = use_bin_weighted_decoder_target_sampling
 
+        self.encoder_window = encoder_window
+        self.num_decoder_targets = num_decoder_targets
+
     def size(self) -> int:
         """Return the current size of the buffer."""
         return self.normal_size() + self.explore_size()
@@ -68,22 +74,15 @@ class CEMRLReplayBuffer(DictReplayBuffer):
         return self.explore_buffer_size if self.explore_full else self.explore_pos - self.buffer_size
 
     def cemrl_sample(
-        self, batch_size: int, env: VecNormalize | None = None, encoder_window: int = 30, decoder_samples: int = 400
-    ) -> tuple[DictReplayBufferSamples, DictReplayBufferSamples]:
+        self, batch_size: int, env: VecNormalize | None = None, encoder_window: int|None = None, decoder_samples: int|None = None
+    ) -> tuple[ReplayBufferSamples, ReplayBufferSamples]:
+        encoder_window = encoder_window or self.encoder_window
+        decoder_samples = decoder_samples or self.num_decoder_targets
         batch_inds = np.random.choice(self.valid_indices(), batch_size)
-        encoder_input = self.get_encoder_context(batch_inds, env, encoder_window)
-        batch_size = len(encoder_input.actions)
-
+        encoder_input:ReplayBufferSamples = self.get_encoder_context(batch_inds, env, encoder_window) # type:ignore
         dec_samples = self.get_decoder_targets(batch_inds, env, decoder_samples)
 
-        enc_obs = {"observation": encoder_input.observations}
-        enc_next_obs = {"observation": encoder_input.next_observations}
-        dec_obs = {"observation": dec_samples.observations}
-        dec_next_obs = {"observation": dec_samples.next_observations}
-        return (
-            encoder_input._replace(observations=enc_obs, next_observations=enc_next_obs),
-            dec_samples._replace(observations=dec_obs, next_observations=dec_next_obs),
-        )  # type:ignore
+        return encoder_input, dec_samples
 
     def add(
         self,
@@ -139,12 +138,12 @@ class CEMRLReplayBuffer(DictReplayBuffer):
         """Return the indices of the valid data in the buffer."""
         normal = np.arange(self.normal_size())
         if self.full:
-            without = (self.pos + np.arange(self.n_envs * 30)) % self.buffer_size
+            without = (self.pos + np.arange(self.n_envs * self.encoder_window)) % self.buffer_size
             normal = np.setdiff1d(normal, without)
         explore = np.arange(self.buffer_size, self.buffer_size + self.explore_size())
         if self.explore_full:
             without = (
-                self.explore_pos - self.buffer_size + np.arange(self.n_envs * 30)
+                self.explore_pos - self.buffer_size + np.arange(self.n_envs * self.encoder_window)
             ) % self.explore_buffer_size + self.buffer_size
             explore = np.setdiff1d(explore, without)
 
@@ -320,9 +319,6 @@ class CEMRLReplayBuffer(DictReplayBuffer):
 
 class NoLinkingCemrlReplayBuffer(CEMRLReplayBuffer):
     def _build_decoder_index(self, num_decoder_targets: int):
-        super()._build_decoder_index(num_decoder_targets)
-
-
         self.episode_ends = np.zeros(self.buffer_size + self.explore_buffer_size, int)
         self.episode_starts = np.zeros(self.buffer_size + self.explore_buffer_size, int)
         self.episode_lengths = np.zeros(self.buffer_size + self.explore_buffer_size, int)
@@ -385,14 +381,14 @@ class NoLinkingCemrlReplayBuffer(CEMRLReplayBuffer):
         return ep_indices
 
 
-class EpisodeLinkingCemrlReplayBuffer(CEMRLReplayBuffer):
-    def __init__(self, *args, num_linked_episodes=5, use_bin_weighted_decoder_target_sampling=False, **kwargs):
+class EpisodeLinkingCemrlReplayBuffer(NoLinkingCemrlReplayBuffer):
+    def __init__(self, *args, num_linked_episodes=3, use_bin_weighted_decoder_target_sampling=False, **kwargs):
         super().__init__(*args, use_bin_weighted_decoder_target_sampling=use_bin_weighted_decoder_target_sampling, **kwargs)
         self.num_linked_episodes = num_linked_episodes
 
     def _build_decoder_index(self, num_decoder_targets: int):
+        CEMRLReplayBuffer._build_decoder_index(self, num_decoder_targets)  # type: ignore
         super()._build_decoder_index(num_decoder_targets)
-        CEMRLReplayBuffer._build_decoder_index(self)  # type: ignore
 
     def _select_decoder_target_indices(self, indices: np.ndarray, num_decoder_targets: int) -> np.ndarray:
         linked_samples = CEMRLReplayBuffer._select_decoder_target_indices(self, indices, self.num_linked_episodes)

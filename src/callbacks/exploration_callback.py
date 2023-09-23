@@ -147,6 +147,10 @@ class ExplorationCallback(BaseCallback):
 
     def _init_callback(self) -> None:
         assert isinstance(self.model, OffPolicyAlgorithm)
+        try:
+            self.exploration_algorithm._setup_model(self.model) # type: ignore
+        except TypeError:
+            self.exploration_algorithm._setup_model()
 
         if (
             self.use_model_buffer

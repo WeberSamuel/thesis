@@ -1,6 +1,7 @@
 from typing import Literal
 import torch as th
 from dataclasses import field, dataclass
+from jsonargparse import lazy_instance
 
 
 @dataclass
@@ -16,12 +17,12 @@ class EncoderConfig:
 @dataclass
 class DecoderConfig:
     complexity: float = 40.0
-    use_state_decoder: bool = False
-    use_next_state_for_reward: bool = False
+    use_state_decoder: bool = True
+    use_next_state_for_reward: bool = True
     num_layers: int = 2
     activation: type[th.nn.Module] = th.nn.ReLU
     lr: float = 3e-4
-
+    ensemble_size: int = 5
 
 class TaskInferenceTrainingConfig:
     use_state_diff: bool = False
@@ -39,20 +40,19 @@ class TaskInferenceTrainingConfig:
 
 @dataclass
 class TaskInferenceConfig:
-    encoder: EncoderConfig = field(default_factory=EncoderConfig)
-    decoder: DecoderConfig = field(default_factory=DecoderConfig)
-    training: TaskInferenceTrainingConfig = field(default_factory=TaskInferenceTrainingConfig)
+    encoder: EncoderConfig = lazy_instance(EncoderConfig)
+    decoder: DecoderConfig = lazy_instance(DecoderConfig)
+    training: TaskInferenceTrainingConfig = lazy_instance(TaskInferenceTrainingConfig)
 
 
 @dataclass
 class CemrlTrainingConfig:
-    task_inference_gradient_steps: int = 2
-    policy_gradient_steps: int = 1
+    task_inference_gradient_steps: int = 50
+    policy_gradient_steps: int = 40
+    num_decoder_targets: int = 400
     encoder_context_length: int = 30
-    decoder_context_length: int = 100
-
 
 @dataclass
 class CemrlConfig:
-    task_inference: TaskInferenceConfig = field(default_factory=TaskInferenceConfig)
-    training: CemrlTrainingConfig = field(default_factory=CemrlTrainingConfig)
+    task_inference: TaskInferenceConfig = lazy_instance(TaskInferenceConfig)
+    training: CemrlTrainingConfig = lazy_instance(CemrlTrainingConfig)

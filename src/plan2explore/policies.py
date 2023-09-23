@@ -9,6 +9,7 @@ from src.cemrl.networks import Encoder
 from src.plan2explore.networks import Ensemble
 from src.utils import apply_function_to_type
 from stable_baselines3.common.type_aliases import Schedule
+from src.cemrl.task_inference import EncoderInput
 
 
 class Plan2ExplorePolicy(StateAwarePolicy):
@@ -79,7 +80,7 @@ class Plan2ExplorePolicy(StateAwarePolicy):
         reward_means = th.zeros(total_num_timesteps, self.num_actions, n_envs, 1)
 
         for timestep, actions in enumerate(timestep_actions):
-            (state_var, state_mean), (reward_var, reward_mean) = self.ensemble({"obs":observation, "action":actions}, z=z)
+            (state_var, state_mean), (reward_var, reward_mean) = self.ensemble(observation, actions, None, z)
             observation = state_mean
             state_vars[timestep] = state_var
             reward_means[timestep] = reward_mean
@@ -112,7 +113,12 @@ class CEMRLExplorationPolicy(Plan2ExplorePolicy):
 
         with th.no_grad():
             y, z, encoder_state = self.encoder(
-                self.encoder.from_obs_to_encoder_input(prev_observation, next_obs)
+                EncoderInput(
+                    obs=prev_observation["observation"],
+                    action=next_obs["action"],
+                    reward=next_obs["reward"],
+                    next_obs=next_obs["observation"],
+                )
             )
 
         self.state = next_obs
