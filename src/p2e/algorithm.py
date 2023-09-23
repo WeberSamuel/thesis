@@ -22,6 +22,7 @@ class P2E(ExplorationAlgorithmMixin, HasSubAlgorithm, StateAwareOffPolicyAlgorit
     def __init__(
         self,
         env: Env | VecEnv,
+        policy: type[P2EPolicy] = P2EPolicy,
         learning_rate=1e-3,
         learning_starts=1024,
         gradient_steps=1,
@@ -29,7 +30,7 @@ class P2E(ExplorationAlgorithmMixin, HasSubAlgorithm, StateAwareOffPolicyAlgorit
         **kwargs,
     ):
         super().__init__(
-            None,  # type: ignore
+            policy,
             env,
             learning_rate,
             learning_starts=learning_starts,

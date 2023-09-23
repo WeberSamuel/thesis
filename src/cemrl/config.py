@@ -11,7 +11,7 @@ class EncoderConfig:
     complexity: float = 40.0
     preprocessed_state_size: int = 0
     use_simplified_state_preprocessor: bool = False
-    lr: float = 3e-4
+    lr: float = 1e-3
 
 
 @dataclass
@@ -21,14 +21,12 @@ class DecoderConfig:
     use_next_state_for_reward: bool = True
     num_layers: int = 2
     activation: type[th.nn.Module] = th.nn.ReLU
-    lr: float = 3e-4
-    ensemble_size: int = 5
+    lr: float = 1e-3
+    ensemble_size: int = 1
 
 class TaskInferenceTrainingConfig:
     use_state_diff: bool = False
     reconstruct_all_steps: bool = True
-    loss_weight_state: float = 0.33
-    loss_weight_reward: float = 0.66
     prior_mode: Literal["fixedOnY", "network"] = "fixedOnY"
     alpha_kl_z_query: float | None = None
     beta_kl_y_query: float | None = None
