@@ -1,4 +1,4 @@
-from typing import NamedTuple
+from typing import Literal, NamedTuple, overload
 
 import torch as th
 from stable_baselines3.common.type_aliases import ReplayBufferSamples
@@ -251,12 +251,32 @@ class TaskInference(DeviceAwareModuleMixin, th.nn.Module):
 
     def get_init_state(self, batch_size: int):
         return th.zeros(batch_size, 1, self.encoder.shared_encoder.hidden_size, device=self.device)
+    
+    @overload
+    def training_step(        
+        self,
+        encoder_context: ReplayBufferSamples,
+        decoder_context: ReplayBufferSamples,
+        return_task_encodings: Literal[False] = False,
+    ) -> dict[str, float]:
+        ...
+
+
+    @overload
+    def training_step(        
+        self,
+        encoder_context: ReplayBufferSamples,
+        decoder_context: ReplayBufferSamples,
+        return_task_encodings: Literal[True] = True,
+    ) -> tuple[dict[str, float], Categorical, list[Normal]]:
+        ...
 
     def training_step(
         self,
         encoder_context: ReplayBufferSamples,
         decoder_context: ReplayBufferSamples,
-    ):
+        return_task_encodings: bool = False,
+    ) -> dict[str, float] | tuple[dict[str, float], Categorical, list[Normal]]:
         config = self.config.training
         batch_size = encoder_context.rewards.shape[0]
 
@@ -308,7 +328,7 @@ class TaskInference(DeviceAwareModuleMixin, th.nn.Module):
         for y in range(self.config.encoder.num_classes):
             _, z = self.encoder.sample_z(y_distribution, z_distributions, y_usage="specific", y=y)
             if config.reconstruct_all_steps:
-                z = z.unsqueeze(1).repeat(1, decoder_state.shape[1], 1)
+                z = z[:, None]
 
             # put in decoder to get likelihood
             state_estimate, reward_estimate = self.decoder(decoder_state, decoder_action, decoder_next_state, z, return_raw=True)
@@ -377,7 +397,7 @@ class TaskInference(DeviceAwareModuleMixin, th.nn.Module):
         self.decoder_optimizer.step()
         self.encoder_optimizer.step()
 
-        return {
+        metrics = {
             "loss": loss.item() / batch_size,
             "kl_qz_pz": th.sum(kl_qz_pz, dim=0).item() / batch_size,
             "kl_qy_py": kl_qy_py.sum().item() / batch_size,
@@ -385,6 +405,10 @@ class TaskInference(DeviceAwareModuleMixin, th.nn.Module):
             "reward_loss": th.sum(reward_losses, dim=0).item() / batch_size,
             "state_loss": th.sum(state_losses, dim=0).item() / batch_size,
         }
+        if return_task_encodings:
+            return metrics, y_distribution, z_distributions
+        else:
+            return metrics
 
     def prior_pz(self, batch_size: int, y: int):
         """

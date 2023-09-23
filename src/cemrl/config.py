@@ -52,7 +52,7 @@ class CemrlTrainingConfig:
     num_decoder_targets: int = 400
     encoder_context_length: int = 30
 
-    imagination_horizon: int = 16
+    imagination_horizon: int = 0
 
 @dataclass
 class CemrlConfig:

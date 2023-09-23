@@ -12,14 +12,13 @@ from stable_baselines3.common.buffers import ReplayBuffer
 from stable_baselines3.common.callbacks import BaseCallback, CallbackList, CheckpointCallback, EvalCallback
 from stable_baselines3.common.policies import BasePolicy
 from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
-from stable_baselines3.common.vec_env import VecEnv, DummyVecEnv, SubprocVecEnv
+from stable_baselines3.common.vec_env import VecEnv, DummyVecEnv
 import wandb
 from src.cemrl.wrappers.cemrl_wrapper_1 import CEMRLWrapper
 from src.envs.meta_env import MetaMixin
 from src.envs.wrappers.heatmap import HeatmapWrapper
 from src.envs.wrappers.non_stationary import NonStationaryWrapper
 from src.envs.wrappers.success import SuccessWrapper
-from src.callbacks.p2e_eval_callback import P2EEvalCallback
 from src.callbacks import (
     ExplorationCallback,
     Plan2ExploreEvalCallback,
@@ -36,7 +35,7 @@ class Callbacks:
     custom_callback: Optional[BaseCallback] = None
     eval_callback: Optional[EvalCallback] = None
     save_heatmap_callback: Optional[SaveHeatmapCallback] = None
-    eval_exploration_callback: Optional[Plan2ExploreEvalCallback | P2EEvalCallback] = None
+    eval_exploration_callback: Optional[Plan2ExploreEvalCallback] = None
     exploration_callback: Optional[ExplorationCallback | ExplorationCallback] = None
     save_config_callback: Optional[SaveConfigCallback] = None
     checkpoint_callback: Optional[CheckpointCallback] = None
@@ -143,7 +142,7 @@ def add_base_algorithm(
         parser.add_subclass_arguments(
             BasePolicy,
             key + "policy",
-            skip=set(["observation_space", "action_space", "lr_schedule", "sub_policy"] + skip_on_policy),
+            skip=set(["observation_space", "action_space", "lr_schedule", "main_policy", "sub_policy"] + skip_on_policy),
             instantiate=False or directly_use_policy,
         )
         if not skip_optimizer:
@@ -221,7 +220,7 @@ if __name__ == "__main__":
     # Argument registration and linking for algorithms
     add_base_algorithm(parser, "main", skip_on_policy=["env"])
 
-    add_base_algorithm(parser, "exploration", skip_on_policy=["ensemble", "encoder"])
+    add_base_algorithm(parser, "exploration", skip_on_policy=["ensemble", "encoder", "task_inference"])
     parser.link_arguments(
         "exploration.algorithm", "callback.exploration_callback.init_args.exploration_algorithm", apply_on="instantiate"
     )
