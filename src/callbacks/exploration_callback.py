@@ -1,3 +1,4 @@
+import math
 from stable_baselines3.common.base_class import BaseAlgorithm
 from stable_baselines3.common.callbacks import BaseCallback, CallbackList
 from stable_baselines3.common.off_policy_algorithm import OffPolicyAlgorithm
@@ -165,12 +166,10 @@ class ExplorationCallback(BaseCallback):
         self.exploration_algorithm.set_logger(self.exploration_algorithm.logger)
         if isinstance(self.exploration_algorithm, OffPolicyAlgorithm):
             self.exploration_algorithm._dump_logs()
+        self.model.num_timesteps += math.ceil(self.pre_train_steps / self.model.n_envs) * self.model.n_envs
         return super()._on_training_start()
 
     def _on_rollout_start(self) -> None:
-        if isinstance(self.exploration_algorithm, OffPolicyAlgorithm):
-            self.exploration_algorithm.gradient_steps = 1
-
         self.exploration_algorithm.gradient_steps = self.rollout_grad_steps
         self.exploration_algorithm.learn(
             self.steps_per_rollout,
@@ -179,6 +178,7 @@ class ExplorationCallback(BaseCallback):
             tb_log_name="exploration",
             reset_num_timesteps=False,
         )
+        self.num_timesteps += math.ceil(self.steps_per_rollout / self.model.n_envs) * self.model.n_envs
         if self.rollout_grad_steps != 0:
             self.exploration_algorithm._dump_logs()
         return super()._on_rollout_start()

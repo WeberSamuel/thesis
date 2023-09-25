@@ -26,7 +26,7 @@ class Plan2Explore(StateAwareOffPolicyAlgorithm):
         learning_rate=1e-3,
         _init_setup_model=False,
         learning_starts=1024,
-        gradient_steps=-1,
+        gradient_steps=-4,
         train_freq=10,
         **kwargs,
     ):
@@ -62,6 +62,7 @@ class Plan2Explore(StateAwareOffPolicyAlgorithm):
             gradient_steps (int): Defines how many steps to perform
             batch_size (int): Defines how large the batch_size should be
         """
+        gradient_steps = self.apply_negative_grad_steps(gradient_steps)
         assert (
             isinstance(self.policy, Plan2ExplorePolicy)
             and self.policy.optimizer is not None

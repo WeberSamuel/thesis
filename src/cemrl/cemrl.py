@@ -48,7 +48,7 @@ class CEMRL(HasSubAlgorithm, StateAwareOffPolicyAlgorithm):
         device: Union[th.device, str] = "auto",
         monitor_wrapper: bool = True,
         seed: Optional[int] = None,
-        gradient_steps=-1,
+        gradient_steps=-10,
         sub_algorithm_class: Type[OffPolicyAlgorithm] = SAC,
         sub_algorithm_kwargs: Dict[str, Any] | None = None,
         _init_setup_model=True,

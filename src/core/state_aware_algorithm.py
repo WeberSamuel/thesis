@@ -44,10 +44,10 @@ class StateAwarePolicy(BasePolicy):
             if isinstance(state, dict):
                 assert isinstance(reset_states, dict)
                 for k, v in state.items():
-                    v[done_idx] = reset_states[k] # type: ignore
+                    v[done_idx] = reset_states[k]  # type: ignore
             else:
                 for s, r in zip(state, reset_states):
-                    s[done_idx] = r # type: ignore
+                    s[done_idx] = r  # type: ignore
             return state
         if n_env is None:
             raise ValueError("n_env was not provided")
@@ -128,22 +128,35 @@ class StateAwareOffPolicyAlgorithm(OffPolicyAlgorithm):
         callback.init_callback(self)
         callback.callbacks.append(orig_callback)
         return total_timesteps, callback
-    
-    def learn(self, total_timesteps: int, callback: MaybeCallback = None, log_interval: int = 4, tb_log_name: str = "run", reset_num_timesteps: bool = True, progress_bar: bool = False):
+
+    def learn(
+        self,
+        total_timesteps: int,
+        callback: MaybeCallback = None,
+        log_interval: int = 4,
+        tb_log_name: str = "run",
+        reset_num_timesteps: bool = True,
+        progress_bar: bool = False,
+    ):
         self.log_interval = log_interval
         return super().learn(total_timesteps, callback, 999999999, tb_log_name, reset_num_timesteps, progress_bar)
-    
+
     def _excluded_save_params(self) -> List[str]:
         return super()._excluded_save_params() + ["state_storage"]
-    
+
     def _get_torch_save_params(self) -> Tuple[List[str], List[str]]:
         state_dicts, tensors = super()._get_torch_save_params()
         tensors += ["state_storage.policy_state"]
         return state_dicts, tensors
-    
+
     def dump_logs_if_neccessary(self):
         if (self.num_timesteps // self.n_envs) % max(1, self.log_interval // self.train_freq.frequency) == 0:
             self._dump_logs()
+
+    def apply_negative_grad_steps(self, gradient_steps):
+        if self.gradient_steps < 0:
+            return max(gradient_steps // -self.gradient_steps, 1)
+        return gradient_steps
 
 
 class StateStorage(BaseCallback):
