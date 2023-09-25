@@ -9,6 +9,9 @@ main:
             preprocessed_state_size: 1
           decoder:
             complexity: 20.0
+            ensemble_size: 3
+        training:
+          num_decoder_targets: 400
   replay_buffer:
     init_args:
       bin_weighted_sampling_mode: "reward"

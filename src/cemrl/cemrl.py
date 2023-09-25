@@ -48,7 +48,7 @@ class CEMRL(HasSubAlgorithm, StateAwareOffPolicyAlgorithm):
         device: Union[th.device, str] = "auto",
         monitor_wrapper: bool = True,
         seed: Optional[int] = None,
-        gradient_steps=-10,
+        gradient_steps=-512,
         sub_algorithm_class: Type[OffPolicyAlgorithm] = SAC,
         sub_algorithm_kwargs: Dict[str, Any] | None = None,
         _init_setup_model=True,
@@ -112,6 +112,7 @@ class CEMRL(HasSubAlgorithm, StateAwareOffPolicyAlgorithm):
             gradient_steps (int): How often the training should be applied
             batch_size (int): Batch size used in the training
         """
+        gradient_steps = self.apply_negative_grad_steps(gradient_steps)
         self.policy.set_training_mode(True)
         self.train_task_inference(gradient_steps, batch_size)
         self.train_policy(gradient_steps, batch_size)

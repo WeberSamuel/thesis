@@ -20,7 +20,7 @@ def evaluate_performance(model, env):
             cv2.waitKey(1)
 
     reward, reward_std = evaluate_policy(
-        model, env, n_eval_episodes=100, callback=render_callback
+        model, env, n_eval_episodes=env.num_envs, callback=render_callback
     )
     print(f"{reward} +- {reward_std}")
 
@@ -47,12 +47,12 @@ def evaluate_world_model(model:CEMRL, env:VecEnv):
             )[1]
         )
         states.append(new_state)
-        obs, reward, _, _ = init_cfg.envs.eval_env.step(action)
+        obs, reward, _, _ = env.step(action)
         observations.append(obs)
         actions.append(action)
         rewards.append(reward)
 
-        img = init_cfg.envs.eval_env.render()
+        img = env.render()
         cv2.imshow("img", img)
         cv2.waitKey(1)
 
@@ -63,7 +63,7 @@ def evaluate_world_model(model:CEMRL, env:VecEnv):
             th.mean(predicted_obs[-1], dim=0),
             th.tensor(model.policy.scale_action(actions[i]), device=model.device),
             None,
-            task_encodings[i],
+            task_encodings[-1],
             return_raw=True
         )
         predicted_obs.append(obs)
@@ -75,19 +75,15 @@ def evaluate_world_model(model:CEMRL, env:VecEnv):
     actions = np.stack(actions)
     rewards = np.stack(rewards)
 
-    print(obs.shape)
-    print(pred_obs.shape)
-    print(actions.shape)
-    print(rewards.shape)
-    print(pred_rewards.shape)
-
-
     df_real = pd.DataFrame({"x": obs[:, 0, 0], "y": obs[:, 0, 1], "reward": rewards[:, 0], "mode": "real"})
     df_imagined = pd.DataFrame({"x": np.mean(pred_obs, axis=1)[:, 0, 0], "y": np.mean(pred_obs, axis=1)[:, 0, 1], "reward": np.mean(pred_rewards, axis=1)[:, 0, 0], "mode": "imagined"})
     df_single_model = pd.DataFrame({"x": pred_obs[:, 0, 0, 0], "y": pred_obs[:, 0, 0, 1], "reward": pred_rewards[:, 0, 0, 0], "mode": "single_model"})
     df = pd.concat([df_real, df_imagined, df_single_model])
     sns.scatterplot(data=df, x="x", y="y", hue="mode", style="mode", size="reward", sizes=(10, 100))
     plt.show()
+    sns.barplot(data=df, x=df.index, y="reward", hue="mode")
+    plt.show()
+    plt.waitforbuttonpress()
 
 def evaluate(model, env):
     evaluate_performance(model, env)
