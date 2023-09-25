@@ -1,43 +1,10 @@
-import numpy as np
 from stable_baselines3.common.base_class import BaseAlgorithm
-from stable_baselines3.common.callbacks import BaseCallback, CallbackList, ConvertCallback
+from stable_baselines3.common.callbacks import BaseCallback, CallbackList
 from stable_baselines3.common.off_policy_algorithm import OffPolicyAlgorithm
 from stable_baselines3.common.on_policy_algorithm import OnPolicyAlgorithm
-from stable_baselines3.common.type_aliases import TrainFreq, TrainFrequencyUnit
-from stable_baselines3.common.vec_env import VecEnv
 from src.envs.meta_env import MetaMixin
 
 from src.core.buffers import ReplayBuffer
-
-
-class MaybeNoTraining:
-    """
-    A context manager that disables training for an OffPolicyAlgorithm if active is True.
-
-    This is useful for exploration algorithms that don't require training, but still need to interact with the environment
-    to generate data for the replay buffer.
-    """
-
-    def __init__(self, active: bool, model: BaseAlgorithm) -> None:
-        """
-        Initializes a new instance of the NoTraining class.
-
-        :param active: Whether to disable training for the model.
-        :param model: The model to disable training for.
-        """
-        if active and not isinstance(model, OffPolicyAlgorithm):
-            raise ValueError("NoTraining is only supported for OffPolicyAlgorithm")
-        self.active = active
-        self.model = model
-
-    def __enter__(self):
-        if self.active and isinstance(self.model, (OffPolicyAlgorithm)):
-            self.original_gradient_steps = self.model.gradient_steps
-            self.model.gradient_steps = 0
-
-    def __exit__(self, exc_type, exc_value, exc_tb):
-        if self.active and isinstance(self.model, (OffPolicyAlgorithm)):
-            self.model.gradient_steps = self.original_gradient_steps
 
 
 class StateCopy:
@@ -120,10 +87,10 @@ class ExplorationCallback(BaseCallback):
 
     def __init__(
         self,
-        exploration_algorithm: BaseAlgorithm,
+        exploration_algorithm: OffPolicyAlgorithm,
         steps_per_rollout=2,
         pre_train_steps=200,
-        train_on_rollout: bool = False,
+        rollout_grad_steps: int | None = 0,
         exploration_log_interval=8,
         use_model_buffer: bool = True,
         verbose: int = 0,
@@ -141,14 +108,16 @@ class ExplorationCallback(BaseCallback):
         self.exploration_algorithm = exploration_algorithm
         self.steps_per_rollout = steps_per_rollout
         self.pre_train_steps = pre_train_steps
-        self.train_on_rollout = train_on_rollout
+        self.rollout_grad_steps = (
+            rollout_grad_steps if rollout_grad_steps is not None else exploration_algorithm.gradient_steps
+        )
         self.exploration_log_interval = exploration_log_interval
         self.use_model_buffer = use_model_buffer
 
     def _init_callback(self) -> None:
         assert isinstance(self.model, OffPolicyAlgorithm)
         try:
-            self.exploration_algorithm._setup_model(self.model) # type: ignore
+            self.exploration_algorithm._setup_model(self.model)  # type: ignore
         except TypeError:
             self.exploration_algorithm._setup_model()
 
@@ -201,15 +170,16 @@ class ExplorationCallback(BaseCallback):
     def _on_rollout_start(self) -> None:
         if isinstance(self.exploration_algorithm, OffPolicyAlgorithm):
             self.exploration_algorithm.gradient_steps = 1
-        with MaybeNoTraining(not self.train_on_rollout, self.exploration_algorithm):
-            self.exploration_algorithm.learn(
-                self.steps_per_rollout,
-                self._exploration_callback,
-                log_interval=self.exploration_log_interval,
-                tb_log_name="exploration",
-                reset_num_timesteps=False,
-            )
-        if self.train_on_rollout and isinstance(self.exploration_algorithm, OffPolicyAlgorithm):
+
+        self.exploration_algorithm.gradient_steps = self.rollout_grad_steps
+        self.exploration_algorithm.learn(
+            self.steps_per_rollout,
+            self._exploration_callback,
+            log_interval=self.exploration_log_interval,
+            tb_log_name="exploration",
+            reset_num_timesteps=False,
+        )
+        if self.rollout_grad_steps != 0:
             self.exploration_algorithm._dump_logs()
         return super()._on_rollout_start()
 

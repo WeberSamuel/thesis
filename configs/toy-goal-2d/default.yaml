@@ -1,12 +1,9 @@
 envs:
   env:
-    n_envs: 512
+    n_envs: 64
     time_limit: 200
     vec_env: stable_baselines3.common.vec_env.DummyVecEnv
-    cemrl_wrapper:
-      class_path: src.cemrl.wrappers.CEMRLWrapper
-      init_args:
-        n_stack: 30
+    cemrl_wrapper: src.cemrl.wrappers.CEMRLWrapper
     heatmap: src.envs.wrappers.heatmap.HeatmapWrapper
     success: src.envs.wrappers.success.PercentageSuccessWrapper
     non_stationary:

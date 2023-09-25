@@ -26,8 +26,8 @@ class Plan2Explore(StateAwareOffPolicyAlgorithm):
         learning_rate=1e-3,
         _init_setup_model=False,
         learning_starts=1024,
-        gradient_steps=1,
-        train_freq=1,
+        gradient_steps=-1,
+        train_freq=10,
         **kwargs,
     ):
         """Initialize the Algorithm."""
