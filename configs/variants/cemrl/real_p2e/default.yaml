@@ -9,7 +9,6 @@ callback:
     init_args:
       steps_per_rollout: 512
       pre_train_steps: 1024000
-      rollout_grad_steps: -1
 exploration:
   algorithm: src.p2e.algorithm.P2E
   policy: src.p2e.policies.P2EPolicy

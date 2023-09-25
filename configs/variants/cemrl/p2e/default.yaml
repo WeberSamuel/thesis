@@ -8,7 +8,8 @@ callback:
     class_path: src.callbacks.ExplorationCallback
     init_args:
       steps_per_rollout: 512
-      rollout_grad_steps: 16384
+      pre_train_steps: 16384
+      rollout_grad_steps: 0
 exploration:
   algorithm: src.plan2explore.plan2explore.Plan2Explore
   policy: src.plan2explore.policies.CEMRLExplorationPolicy

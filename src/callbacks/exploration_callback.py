@@ -90,7 +90,7 @@ class ExplorationCallback(BaseCallback):
         exploration_algorithm: OffPolicyAlgorithm,
         steps_per_rollout=2,
         pre_train_steps=200,
-        rollout_grad_steps: int | None = 0,
+        rollout_grad_steps: int | None = None,
         exploration_log_interval=8,
         use_model_buffer: bool = True,
         verbose: int = 0,
