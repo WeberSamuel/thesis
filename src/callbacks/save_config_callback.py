@@ -22,7 +22,7 @@ class SaveConfigCallback(BaseCallback):
         print(f"Experiment is logged at {logger_dir}")
 
         path = os.path.join(logger_dir, "config.yaml")
-        self.parser.save(self.cfg, path, format="yaml", skip_check=True, overwrite=True, multifile=False)
+        self.parser.save(self.cfg, path, format="yaml", skip_check=True, overwrite=True, multifile=False, skip_none=False)
 
         cfg = {k: v for k, v in vars(self.cfg.as_flat()).items() if isinstance(v, (int, float, str, bool))}
         metric_dict = {

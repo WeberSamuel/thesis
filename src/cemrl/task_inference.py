@@ -139,10 +139,9 @@ class Encoder(DeviceAwareModuleMixin, th.nn.Module):
             # Sample from specified Gaussian using reparametrization trick
             # this operation samples from each Gaussian for every class first
             # (diag_embed not possible for distributions), put it back to tensor with shape [class, batch, latent]
-            sampled = th.cat([th.unsqueeze(z_distributions[i].rsample(), 0) for i in range(self.config.num_classes)], dim=0)
-
+            sampled = th.stack([z_distribution.rsample() for z_distribution in z_distributions], dim=0)
         elif sampler == "mean":
-            sampled = th.cat([th.unsqueeze(z_distributions[i].mean, 0) for i in range(self.config.num_classes)], dim=0)
+            sampled = th.stack([z_distribution.mean for z_distribution in z_distributions], dim=0)
         else:
             raise RuntimeError("Sampler not specified correctly")
 
@@ -167,7 +166,7 @@ class Decoder(th.nn.Module):
         self.config = config
         self.state_preprocessor = state_preprocessor
 
-        self.state_decoder_input_size = self.state_preprocessor.output_dim + action_size + z_size
+        self.state_decoder_input_size = state_size + action_size + z_size
 
         self.reward_decoder_input_size = self.state_preprocessor.output_dim + action_size + z_size
         if config.use_next_state_for_reward:
@@ -190,22 +189,24 @@ class Decoder(th.nn.Module):
             activation=config.activation,
         )
 
-    def forward(self, state:th.Tensor, action:th.Tensor, next_state:th.Tensor|None, z:th.Tensor):
-        state = self.state_preprocessor(state)
+    def forward(self, state: th.Tensor, action: th.Tensor, next_state: th.Tensor | None, z: th.Tensor):
         if self.config.use_state_decoder:
             assert self.net_state_decoder is not None
             state_estimate = self.net_state_decoder(th.cat([state, action, z], dim=-1))
         else:
             state_estimate = None
 
+        # Preprocess state only for reward calculation
+        state = self.state_preprocessor(state)
+
         if self.config.use_next_state_for_reward:
             if next_state is not None:
                 next_state = self.state_preprocessor(next_state)
             elif state_estimate is not None:
-                next_state = state_estimate
+                next_state = self.state_preprocessor(state_estimate)
             else:
                 raise RuntimeError("No next state available, but use next state for reward is set")
-            reward_estimate = self.net_reward_decoder(th.cat([state, action, next_state, z], dim=-1)) # type: ignore
+            reward_estimate = self.net_reward_decoder(th.cat([state, action, next_state, z], dim=-1))  # type: ignore
         else:
             reward_estimate = self.net_reward_decoder(th.cat([state, action, z], dim=-1))
 
@@ -239,10 +240,8 @@ class TaskInference(DeviceAwareModuleMixin, th.nn.Module):
         )
         self.prior_pz_layer = th.nn.Linear(config.encoder.num_classes, config.encoder.latent_dim * 2)
 
-        self.encoder_optimizer = config.training.optimizer_class(
-            list(self.encoder.parameters()) + list(self.prior_pz_layer.parameters()), lr=config.encoder.lr  # type: ignore
-        )
-        self.decoder_optimizer = config.training.optimizer_class(self.decoder.parameters(), lr=config.decoder.lr)  # type: ignore
+        self.optimizer = config.training.optimizer_class(self.parameters(), lr=config.training.lr)  # type: ignore
+
         self.reward_loss_factor = obs_dim / (REWARD_DIM + obs_dim)
         self.state_loss_factor = REWARD_DIM / (REWARD_DIM + obs_dim)
 
@@ -251,9 +250,9 @@ class TaskInference(DeviceAwareModuleMixin, th.nn.Module):
 
     def get_init_state(self, batch_size: int):
         return th.zeros(batch_size, 1, self.encoder.shared_encoder.hidden_size, device=self.device)
-    
+
     @overload
-    def training_step(        
+    def training_step(
         self,
         encoder_context: ReplayBufferSamples,
         decoder_context: ReplayBufferSamples,
@@ -261,9 +260,8 @@ class TaskInference(DeviceAwareModuleMixin, th.nn.Module):
     ) -> dict[str, float]:
         ...
 
-
     @overload
-    def training_step(        
+    def training_step(
         self,
         encoder_context: ReplayBufferSamples,
         decoder_context: ReplayBufferSamples,
@@ -328,21 +326,23 @@ class TaskInference(DeviceAwareModuleMixin, th.nn.Module):
         for y in range(self.config.encoder.num_classes):
             _, z = self.encoder.sample_z(y_distribution, z_distributions, y_usage="specific", y=y)
             if config.reconstruct_all_steps:
-                z = z[:, None]
+                z = z[:, None].expand(-1, decoder_action.shape[1], -1)
 
             # put in decoder to get likelihood
-            state_estimate, reward_estimate = self.decoder(decoder_state, decoder_action, decoder_next_state, z, return_raw=True)
+            state_estimate, reward_estimate = self.decoder(
+                decoder_state, decoder_action, decoder_next_state, z, return_raw=True
+            )
             reward_loss = th.sum((reward_estimate - reward_target[None]) ** 2, dim=-1)
-            reward_loss = th.mean(reward_loss, dim=0)
             if config.reconstruct_all_steps:
-                reward_loss = th.mean(reward_loss, dim=1)
+                reward_loss = th.mean(reward_loss, dim=-1)
+            reward_loss = th.mean(reward_loss, dim=0)
             reward_losses[:, y] = reward_loss
 
             if self.config.decoder.use_state_decoder:
                 state_loss = th.sum((state_estimate - state_target[None]) ** 2, dim=-1)
-                state_loss = th.mean(state_loss, dim=0)
                 if config.reconstruct_all_steps:
-                    state_loss = th.mean(state_loss, dim=1)
+                    state_loss = th.mean(state_loss, dim=-1)
+                state_loss = th.mean(state_loss, dim=0)
                 state_losses[:, y] = state_loss
                 nll_px[:, y] = self.state_loss_factor * state_loss + self.reward_loss_factor * reward_loss
             else:
@@ -367,9 +367,7 @@ class TaskInference(DeviceAwareModuleMixin, th.nn.Module):
 
         y_probs: th.Tensor = y_distribution.probs  # type: ignore
 
-        elbo = th.sum(
-            th.sum(th.mul(y_probs, (-1) * nll_px - config.alpha_kl_z * kl_qz_pz), dim=-1) - config.beta_kl_y * kl_qy_py
-        )
+        elbo = th.sum(th.sum(th.mul(y_probs, -nll_px - config.alpha_kl_z * kl_qz_pz), dim=-1) - config.beta_kl_y * kl_qy_py)
         if config.alpha_kl_z_query is not None:
             assert kl_qz_qz_query is not None and kl_qy_qy_query is not None
             elbo += th.sum(
@@ -378,7 +376,7 @@ class TaskInference(DeviceAwareModuleMixin, th.nn.Module):
             )
 
         # but elbo should be maximized, and backward function assumes minimization
-        loss = (-1) * elbo
+        loss = -elbo
 
         # Optimization strategy:
         # Decoder: the two head loss functions backpropagate their gradients into corresponding parts
@@ -386,24 +384,21 @@ class TaskInference(DeviceAwareModuleMixin, th.nn.Module):
         # Encoder: the KLs and the likelihood from the decoder backpropagate their gradients into
         # corresponding parts of the network, then ONE common optimizer computes all weight updates
         # This is not done explicitly but all within the elbo loss.
-
-        self.encoder_optimizer.zero_grad()
-        self.decoder_optimizer.zero_grad()
+        self.optimizer.zero_grad()
 
         # Backward pass: compute gradient of the loss with respect to model parameters
         loss.backward()
 
         # Calling the step function on an Optimizer makes an update to its parameters
-        self.decoder_optimizer.step()
-        self.encoder_optimizer.step()
+        self.optimizer.step()
 
         metrics = {
             "loss": loss.item() / batch_size,
-            "kl_qz_pz": th.sum(kl_qz_pz, dim=0).item() / batch_size,
-            "kl_qy_py": kl_qy_py.sum().item() / batch_size,
-            "nll_px": th.sum(nll_px, dim=0).item() / batch_size,
-            "reward_loss": th.sum(reward_losses, dim=0).item() / batch_size,
-            "state_loss": th.sum(state_losses, dim=0).item() / batch_size,
+            "kl_qz_pz": kl_qz_pz.mean().item(),
+            "kl_qy_py": kl_qy_py.mean().item(),
+            "nll_px": nll_px.mean().item(),
+            "reward_loss": reward_losses.mean().item(),
+            "state_loss": state_losses.mean().item(),
         }
         if return_task_encodings:
             return metrics, y_distribution, z_distributions
@@ -420,9 +415,10 @@ class TaskInference(DeviceAwareModuleMixin, th.nn.Module):
         """
 
         if self.config.training.prior_mode == "fixedOnY":
+            ones = th.ones(batch_size, self.config.encoder.latent_dim, device=self.device)
             return Normal(
-                th.ones(batch_size, self.config.encoder.latent_dim, device=self.device) * y,
-                th.ones(batch_size, self.config.encoder.latent_dim, device=self.device) * self.config.training.prior_sigma,
+                ones * y,
+                ones * self.config.training.prior_sigma,
             )
 
         elif self.config.training.prior_mode == "network":
@@ -442,3 +438,31 @@ class TaskInference(DeviceAwareModuleMixin, th.nn.Module):
             probs=th.ones(batch_size, self.config.encoder.num_classes, device=self.device)
             * (1.0 / self.config.encoder.num_classes)
         )
+
+    @th.no_grad()
+    def validate(self, encoder_context: ReplayBufferSamples, decoder_context: ReplayBufferSamples):
+        num_decoder_targets = decoder_context.rewards.shape[1]
+        y, z, _ = self.encoder(
+            EncoderInput(
+                encoder_context.observations,
+                encoder_context.actions,
+                encoder_context.rewards,
+                encoder_context.next_observations,
+            )
+        )
+        if self.config.training.reconstruct_all_steps:
+            z = z[:, None].expand(-1, num_decoder_targets, -1)
+
+        state_estimate, reward_estimate = self.decoder(
+            decoder_context.observations, decoder_context.actions, decoder_context.next_observations, z, return_raw=True
+        )
+
+        reward_loss = th.nn.functional.mse_loss(reward_estimate, decoder_context.rewards[None].expand_as(reward_estimate))
+        if self.config.decoder.use_state_decoder:
+            state_loss = th.nn.functional.mse_loss(
+                state_estimate, decoder_context.next_observations[None].expand_as(state_estimate)
+            )
+        else:
+            state_loss = th.tensor(0)
+
+        return state_loss.item(), reward_loss.item()

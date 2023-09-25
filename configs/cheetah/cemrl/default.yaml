@@ -1,8 +1,14 @@
 main:
-  algorithm:
-    init_args:
-      tensorboard_log: "logs/half-cheetah/cemrl"
   policy:
     init_args:
-      latent_dim: 1
-      net_complexity: 10.0
+      config:
+        task_inference:
+          encoder:
+            latent_dim: 1
+            complexity: 20.0
+            preprocessed_state_size: 1
+          decoder:
+            complexity: 20.0
+  replay_buffer:
+    init_args:
+      bin_weighted_sampling_mode: "reward"

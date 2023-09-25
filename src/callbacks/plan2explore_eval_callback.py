@@ -7,7 +7,7 @@ from stable_baselines3.common.base_class import BaseAlgorithm
 from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.evaluation import evaluate_policy
 from stable_baselines3.common.vec_env import VecEnv, sync_envs_normalization
-
+from src.p2e.policies import P2EPolicy
 from .eval_in_log_folder_callback import EvalInLogFolderCallback
 from src.plan2explore.policies import Plan2ExplorePolicy
 
@@ -55,7 +55,7 @@ class Plan2ExploreEvalCallback(EvalInLogFolderCallback):
     such that it tries to maximize the future reward instead.
     """
     def _eval_step(self) -> bool:
-        assert self.eval_model is not None and isinstance(self.eval_model.policy, Plan2ExplorePolicy)
+        assert self.eval_model is not None and isinstance(self.eval_model.policy, Plan2ExplorePolicy|P2EPolicy)
         self.eval_model.policy._is_collecting = False
         continue_training = True
 

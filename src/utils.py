@@ -17,7 +17,7 @@ def initialize_weights(m):
 
 def build_network(input_size: int, layers: tuple[int, ...] | list[int], activation: type[th.nn.Module], output_size: int):
     network = th.nn.Sequential(*create_mlp(input_size, output_size, list(layers), activation))
-    network.apply(initialize_weights)
+    # network.apply(initialize_weights)
     return network
 
 

@@ -10,6 +10,7 @@ from src.cemrl.policies import CEMRLPolicy
 from src.cemrl.task_inference import EncoderInput
 from src.cemrl.types import CEMRLPolicyInput
 from src.core.state_aware_algorithm import StateAwarePolicy
+from src.p2e.networks import OneStepModel
 from src.plan2explore.networks import Ensemble
 from src.utils import apply_function_to_type, build_network
 
@@ -24,12 +25,14 @@ class P2EPolicy(StateAwarePolicy):
         lr_schedule: Any,
         main_policy: CEMRLPolicy,
         sub_policy: BasePolicy,
-        optimizer_class: th.optim.Optimizer = th.optim.AdamW,
-        optimizer_kwargs: dict[str, Any]|None = None,
+        optimizer_class: type[th.optim.Optimizer] = th.optim.AdamW,
+        optimizer_kwargs: dict[str, Any] | None = None,
         config: P2EConfig = lazy_instance(P2EConfig),
         **kwargs
     ):
-        super().__init__(observation_space, action_space, optimizer_class=optimizer_class, optimizer_kwargs=optimizer_kwargs, **kwargs)
+        super().__init__(
+            observation_space, action_space, optimizer_class=optimizer_class, optimizer_kwargs=optimizer_kwargs, **kwargs
+        )
         self.config = config
         self.sub_policy = sub_policy
         self.task_inference = main_policy.task_inference
@@ -46,17 +49,17 @@ class P2EPolicy(StateAwarePolicy):
             self.one_step_models = Ensemble(
                 th.nn.ModuleList(
                     [
-                        build_network(
-                            self.input_size,
-                            [int(self.input_size * config.complexity)] * config.layers,
-                            th.nn.ReLU,
-                            spaces.flatdim(observation_space["observation"]) + 1,
+                        OneStepModel(
+                            spaces.flatdim(observation_space["observation"]),
+                            spaces.flatdim(action_space),
+                            main_policy.config.task_inference.encoder.latent_dim,
+                            config.one_step_model,
                         )
-                        for _ in range(config.ensemble_size)
+                        for _ in range(config.one_step_model.ensemble_size)
                     ]
                 )
             )
-            self.optimizer = self.optimizer_class(self.parameters(), lr=lr_schedule(1), **self.optimizer_kwargs) # type: ignore
+            self.optimizer = self.optimizer_class(self.parameters(), lr=lr_schedule(1), **self.optimizer_kwargs)  # type: ignore
 
     @th.no_grad()
     def _predict(
@@ -90,6 +93,9 @@ class P2EPolicy(StateAwarePolicy):
         policy_obs = CEMRLPolicyInput(observation=observation["observation"], task_indicator=z)
         action = self.sub_policy._predict(policy_obs, deterministic)  # type: ignore
         return action
+    
+    def online_disagreement(self, obs: th.Tensor, task_encoding: th.Tensor) -> th.Tensor:
+        pass
 
     def _reset_states(self, size: int) -> tuple[np.ndarray, ...]:
         return apply_function_to_type(

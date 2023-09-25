@@ -34,10 +34,16 @@ launch_config = """
             "name": "Python: Refresh launch.json",
             "type": "python",
             "request": "launch",
-            "program": "scripts/create_vs_launch_config.py",
+            "program": "scripts/create_vs_config.py",
             "console": "integratedTerminal",
         },
 """
+task_config = """
+{
+    "version": "2.0.0",
+    "tasks": [
+"""
+
 config_path = Path("configs")
 variants_path = config_path / "variants"
 paths = list(variants_path.glob("**/*.yaml"))
@@ -90,10 +96,34 @@ for path in paths:
                 }},
             """
 
+            task_config += f"""
+                {{
+                    "label": "{experiment_name}",
+                    "type": "shell",
+                    "command": "${{config:python.defaultInterpreterPath}}",
+                    "args": [
+                        "-O", "cli.py", "--config", {', "--config", '.join([f'"{str(x)}"' for x in variants_configs + env_variants_config])}, "--main.algorithm.init_args.tensorboard_log", "logs/{environment_name.replace(" - ", "/")}", "--learn.tb_log_name", "{variant_name}", "train"
+                    ],
+                    "presentation": {{  
+                        "reveal": "always",
+                        "panel": "new"
+                    }}
+                }},
+            """
+                    
+
 launch_config += """
     ]
 }
 """
+task_config += """
+    ]
+}
+"""
+
 
 with open(".vscode/launch.json", "w") as f:
-    f.write(launch_config)
+    f.write(launch_config.replace("\\", "\\\\"))
+
+with open(".vscode/tasks.json", "w") as f:
+    f.write(task_config.replace("\\", "\\\\"))

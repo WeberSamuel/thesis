@@ -14,7 +14,8 @@ from stable_baselines3.common.policies import BasePolicy
 from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
 from stable_baselines3.common.vec_env import VecEnv, DummyVecEnv
 import wandb
-from src.cemrl.wrappers.cemrl_wrapper_1 import CEMRLWrapper
+from src.cemrl.task_inference import EncoderInput
+from src.cemrl.wrappers.cemrl_wrapper import CEMRLWrapper
 from src.envs.meta_env import MetaMixin
 from src.envs.wrappers.heatmap import HeatmapWrapper
 from src.envs.wrappers.non_stationary import NonStationaryWrapper
@@ -229,10 +230,23 @@ if __name__ == "__main__":
     )
 
     add_base_algorithm(parser, "sub_algorithm", skip_on_algorithm=["env", "policy", "buffer_size"], skip_replay_buffer=True)
-    parser.link_arguments("sub_algorithm.algorithm.class_path", "main.algorithm.init_args.sub_policy_algorithm_class")
+    parser.link_arguments("sub_algorithm.algorithm.class_path", "main.algorithm.init_args.sub_algorithm_class")
     parser.link_arguments(
         "sub_algorithm.algorithm.init_args",
-        "main.algorithm.init_args.sub_policy_algorithm_kwargs",
+        "main.algorithm.init_args.sub_algorithm_kwargs",
+        apply_on="instantiate",
+        compute_fn=lambda x: vars(x),
+    )
+
+    add_base_algorithm(
+        parser, "exploration_sub_algorithm", skip_on_algorithm=["env", "policy", "buffer_size"], skip_replay_buffer=True
+    )
+    parser.link_arguments(
+        "exploration_sub_algorithm.algorithm.class_path", "exploration.algorithm.init_args.sub_algorithm_class"
+    )
+    parser.link_arguments(
+        "exploration_sub_algorithm.algorithm.init_args",
+        "exploration.algorithm.init_args.sub_algorithm_kwargs",
         apply_on="instantiate",
         compute_fn=lambda x: vars(x),
     )
@@ -263,7 +277,15 @@ if __name__ == "__main__":
         apply_on="instantiate",
     )
 
-    parser.add_argument("subcommand", choices=["train", "train-exploration", "eval"])
+    subcommands = parser.add_subcommands(False)
+    subcommands.add_subcommand("train", ArgumentParser())
+    
+
+    eval_args = ArgumentParser()
+    eval_args.add_argument("path", type=str)
+    subcommands.add_subcommand("eval-world-model-imagination", eval_args)
+    subcommands.add_subcommand("eval", eval_args)
+
     parser.add_argument("--wandb", type=bool, default=True)
     cfg = parser.parse_args()
 
@@ -286,7 +308,7 @@ if __name__ == "__main__":
     if i.checkpoint_callback is not None:
         i.checkpoint_callback.init_args.save_freq = total_steps // i.checkpoint_callback.init_args.save_freq
 
-    if use_wandb:
+    if use_wandb and command == "train":
         log_dir = cfg.main.algorithm.init_args.tensorboard_log
         run_id = get_latest_run_id(log_dir, cfg.learn.tb_log_name) + 1
         env, *log_path_parts = log_dir.replace("logs/", "").split("/")
@@ -310,6 +332,7 @@ if __name__ == "__main__":
     elif command == "train-exploration":
         init_cfg.exploration.algorithm.learn(**init_cfg.learn)
     elif command == "eval":
-        raise NotImplementedError()
-    elif command == "train_with_best_replay_buffer":
-        init_cfg.main.algorithm.replay_buffer
+        from eval import evaluate
+        init_cfg.main.algorithm.set_parameters(cfg.eval.path)
+        evaluate(init_cfg.main.algorithm, init_cfg.envs.eval_env)
+

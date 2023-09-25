@@ -13,7 +13,7 @@ callback:
 exploration:
   algorithm: src.p2e.algorithm.P2E
   policy: src.p2e.policies.P2EPolicy
-sub_algorithm:
+exploration_sub_algorithm:
   algorithm: 
     class_path: stable_baselines3.sac.SAC
     init_args:

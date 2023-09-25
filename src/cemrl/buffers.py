@@ -1,4 +1,4 @@
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Literal
 
 import numpy as np
 import pandas as pd
@@ -28,7 +28,7 @@ class CEMRLReplayBuffer(DictReplayBuffer):
         encoder: th.nn.Module | None = None,
         exploration_buffer_size: int = 1_000_000,
         n_envs=1,
-        use_bin_weighted_decoder_target_sampling: bool = True,
+        bin_weighted_sampling_mode: Literal["observation", "reward", "none"] = "observation",
         encoder_window: int = 30,
         num_decoder_targets: int = 400,
         **kwargs,
@@ -59,10 +59,14 @@ class CEMRLReplayBuffer(DictReplayBuffer):
         self.goal_changes = np.zeros(buffer_size, bool)
         self.timeouts = np.zeros(buffer_size, bool)
         self.idxs_by_goal = None
-        self.use_bin_weighted_decoder_target_sampling = use_bin_weighted_decoder_target_sampling
+        self.bin_weighted_sampling_mode = bin_weighted_sampling_mode
 
         self.encoder_window = encoder_window
         self.num_decoder_targets = num_decoder_targets
+        self.train_indices = np.array([], dtype=int)
+        self.validation_indices = np.array([], dtype=int)
+        
+        self._train_val_needs_update = False
 
     def size(self) -> int:
         """Return the current size of the buffer."""
@@ -82,12 +86,17 @@ class CEMRLReplayBuffer(DictReplayBuffer):
         env: VecNormalize | None = None,
         encoder_window: int | None = None,
         decoder_samples: int | None = None,
+        mode: Literal["training", "validation"] = "training",
     ) -> tuple[ReplayBufferSamples, ReplayBufferSamples]:
+        if self._train_val_needs_update:
+            self.update_train_val_indices(0.8)
+            self._train_val_needs_update = False
+
         encoder_window = encoder_window or self.encoder_window
         decoder_samples = decoder_samples or self.num_decoder_targets
-        batch_inds = np.random.choice(self.valid_indices(), batch_size)
+        batch_inds = np.random.choice(self.valid_indices(mode), batch_size)
         encoder_input: ReplayBufferSamples = self.get_encoder_context(batch_inds, env, encoder_window)  # type:ignore
-        dec_samples = self.get_decoder_targets(batch_inds, env, decoder_samples)
+        dec_samples = self.get_decoder_targets(batch_inds, env, decoder_samples, mode)
 
         return encoder_input, dec_samples
 
@@ -130,6 +139,9 @@ class CEMRLReplayBuffer(DictReplayBuffer):
         self.timeouts[pos] = np.array([info.get("TimeLimit.truncated", False) for info in infos])
         self.goal_changes[pos] = np.array([info.get("goal_changed", False) for info in infos]) | done
 
+        # don't update if buffer is already full -> no new data idx
+        self._train_val_needs_update = True # not self.explore_full or not self.full
+
         if is_exploring:
             self.explore_pos = (
                 self.buffer_size + (self.n_envs + self.explore_pos - self.buffer_size) % self.explore_buffer_size
@@ -141,12 +153,13 @@ class CEMRLReplayBuffer(DictReplayBuffer):
             if self.pos == 0:
                 self.full = True
 
-    def valid_indices(self):
+    def valid_indices(self, mode: Literal["all", "training", "validation"] = "all"):
         """Return the indices of the valid data in the buffer."""
         normal = np.arange(self.normal_size())
         if self.full:
             without = (self.pos + np.arange(self.n_envs * self.encoder_window)) % self.buffer_size
             normal = np.setdiff1d(normal, without)
+        
         explore = np.arange(self.buffer_size, self.buffer_size + self.explore_size())
         if self.explore_full:
             without = (
@@ -154,7 +167,28 @@ class CEMRLReplayBuffer(DictReplayBuffer):
             ) % self.explore_buffer_size + self.buffer_size
             explore = np.setdiff1d(explore, without)
 
-        return np.concatenate([normal, explore])
+        valid_idxs = np.concatenate([normal, explore])
+        if mode == "training":
+            return np.setdiff1d(valid_idxs, self.validation_indices)
+        elif mode == "validation":
+            return np.setdiff1d(valid_idxs, self.train_indices)
+        return valid_idxs
+
+    
+    
+    def update_train_val_indices(self, train_val_percentage):
+        valid_indices = self.valid_indices()
+
+        new_idxs = np.setdiff1d(valid_indices, self.train_indices)
+        new_idxs = np.setdiff1d(new_idxs, self.validation_indices)
+
+        new_train_idxs = np.random.choice(new_idxs, int(len(new_idxs) * train_val_percentage))
+        new_val_idxs = np.setdiff1d(new_idxs, new_train_idxs)
+        
+        self.train_indices = np.concatenate([self.train_indices, new_train_idxs])
+        self.validation_indices = np.concatenate([self.validation_indices, new_val_idxs])
+
+
 
     def dreamer_sample(
         self, batch_size: int, env: VecNormalize | None = None, goals: np.ndarray | None = None, max_length: int = 64
@@ -275,7 +309,7 @@ class CEMRLReplayBuffer(DictReplayBuffer):
             return data, indices, (batch_idx, time_idx)
         return data
 
-    def get_decoder_targets(self, base_indices: np.ndarray, env: VecNormalize | None = None, num_decoder_targets: int = 300):
+    def get_decoder_targets(self, base_indices: np.ndarray, env: VecNormalize | None = None, num_decoder_targets: int = 300, mode: Literal["training", "validation"] = "training"):
         """
         Return samples to be used as targets by the decoder.
         The returned samples have the same goal as the input samples, yet they can come from different episodes.
@@ -286,7 +320,7 @@ class CEMRLReplayBuffer(DictReplayBuffer):
             self._build_decoder_index(num_decoder_targets)
             self.is_decoder_index_build = True
 
-        indices = self._select_decoder_target_indices(base_indices, num_decoder_targets)
+        indices = self._select_decoder_target_indices(base_indices, num_decoder_targets, mode)
 
         return ReplayBufferSamples(
             observations=self.to_torch(self._normalize_obs(self.observations[indices], env)),  # type: ignore
@@ -296,12 +330,15 @@ class CEMRLReplayBuffer(DictReplayBuffer):
             rewards=self.to_torch(self._normalize_reward(self.rewards[indices], env))[..., None],
         )
 
-    def _select_decoder_target_indices(self, indices: np.ndarray, num_decoder_targets: int) -> np.ndarray:
+    def _select_decoder_target_indices(self, indices: np.ndarray, num_decoder_targets: int, mode: Literal["training", "validation"]) -> np.ndarray:
         group_ids = self.goal_idxs[indices]
         selected_ids = np.random.rand(len(indices), num_decoder_targets) * self.grouped_goal_sizes[group_ids, None]
         selected_ids = selected_ids.astype(int)
 
-        indices = self.padded_idxs_by_goal[group_ids[:, None], selected_ids]  # type: ignore
+        if mode == "training":
+            indices = self.train_padded_idxs_by_goal[group_ids[:, None], selected_ids]
+        else:
+            indices = self.val_padded_idxs_by_goal[group_ids[:, None], selected_ids]
         assert np.all(self.goal_idxs[indices] == self.goal_idxs[indices[:, 0]][:, None])
         return indices
 
@@ -314,17 +351,40 @@ class CEMRLReplayBuffer(DictReplayBuffer):
         self.grouped_goal_sizes[list(groups.groups.keys())] = groups.size().values
         max_group_size = max(self.grouped_goal_sizes.max(), num_decoder_targets)
 
-        padded_idxs_by_goal = np.zeros((self.goal_idxs.max() + 1, max_group_size), dtype=int)
-        if self.use_bin_weighted_decoder_target_sampling:
+        train_padded_idxs_by_goal = np.zeros((self.goal_idxs.max() + 1, max_group_size), dtype=int)
+        val_padded_idxs_by_goal = np.zeros((self.goal_idxs.max() + 1, max_group_size), dtype=int)
+        if self.bin_weighted_sampling_mode != "none":
             self.grouped_goal_sizes[:] = max_group_size
             for k, v in self.idxs_by_goal.items():
-                count, _, bins = binned_statistic_dd(self.observations[v], v, statistic="count", expand_binnumbers=True)  # type: ignore
-                weights = 1 / count[tuple(bins - 1)] / np.count_nonzero(count)
-                padded_idxs_by_goal[k] = np.random.choice(v, max_group_size, p=weights)  # type: ignore
+                if self.bin_weighted_sampling_mode == "observation":
+                    count, _, bins = binned_statistic_dd(self.observations[v], v, statistic="count", expand_binnumbers=True)  # type: ignore
+                    weights = 1 / count[tuple(bins - 1)] / np.count_nonzero(count)
+                elif self.bin_weighted_sampling_mode == "reward": 
+                    count, _, bins = binned_statistic_dd(self.rewards[v], v, statistic="count", expand_binnumbers=True)  # type: ignore
+                    weights = 1 / count[bins - 1] / np.count_nonzero(count)
+                else:
+                    raise ValueError(f"Unknown bin_weighted_sampling_mode: {self.bin_weighted_sampling_mode}")
+                train_weights = weights[np.isin(v, self.train_indices)] # type: ignore
+                train_weights /= train_weights.sum()
+                val_weights = weights[np.isin(v, self.validation_indices)] # type: ignore
+                val_weights /= val_weights.sum()
+
+                train_idxs = v[np.isin(v, self.train_indices)]
+                if len(train_idxs) != 0:
+                    train_padded_idxs_by_goal[k] = np.random.choice(train_idxs, max_group_size, p=train_weights)  # type: ignore
+
+                val_idxs = v[np.isin(v, self.validation_indices)]
+                if len(val_idxs) != 0:
+                    val_padded_idxs_by_goal[k] = np.random.choice(val_idxs, max_group_size, p=val_weights)  # type: ignore
         else:
             for k, v in self.idxs_by_goal.items():
-                padded_idxs_by_goal[k, : len(v)] = v
-        self.padded_idxs_by_goal = padded_idxs_by_goal
+                train_idxs = v[np.isin(v, self.train_indices)] # type: ignore
+                train_padded_idxs_by_goal[k, : len(train_idxs)] = train_idxs # type: ignore
+
+                val_idxs = v[np.isin(v, self.validation_indices)] # type: ignore
+                val_padded_idxs_by_goal[k, : len(val_idxs)] = val_idxs # type: ignore
+        self.train_padded_idxs_by_goal = train_padded_idxs_by_goal
+        self.val_padded_idxs_by_goal = val_padded_idxs_by_goal
 
 
 class NoLinkingCemrlReplayBuffer(CEMRLReplayBuffer):
@@ -392,16 +452,16 @@ class NoLinkingCemrlReplayBuffer(CEMRLReplayBuffer):
 
 
 class EpisodeLinkingCemrlReplayBuffer(NoLinkingCemrlReplayBuffer):
-    def __init__(self, *args, num_linked_episodes=3, use_bin_weighted_decoder_target_sampling=False, **kwargs):
-        super().__init__(*args, use_bin_weighted_decoder_target_sampling=use_bin_weighted_decoder_target_sampling, **kwargs)
+    def __init__(self, *args, num_linked_episodes=3, bin_weighted_sampling_mode="none", **kwargs):
+        super().__init__(*args, bin_weighted_sampling_mode=bin_weighted_sampling_mode, **kwargs)
         self.num_linked_episodes = num_linked_episodes
 
     def _build_decoder_index(self, num_decoder_targets: int):
         CEMRLReplayBuffer._build_decoder_index(self, num_decoder_targets)  # type: ignore
         super()._build_decoder_index(num_decoder_targets)
 
-    def _select_decoder_target_indices(self, indices: np.ndarray, num_decoder_targets: int) -> np.ndarray:
-        linked_samples = CEMRLReplayBuffer._select_decoder_target_indices(self, indices, self.num_linked_episodes)
+    def _select_decoder_target_indices(self, indices: np.ndarray, num_decoder_targets: int, mode: Literal["training", "validation"] = "training") -> np.ndarray:
+        linked_samples = CEMRLReplayBuffer._select_decoder_target_indices(self, indices, self.num_linked_episodes, mode)
         indices = linked_samples.reshape(-1)
         no_linking_targets = super()._select_decoder_target_indices(indices, num_decoder_targets // self.num_linked_episodes)  # type: ignore
         task_episode_indices = no_linking_targets.reshape(len(linked_samples), self.num_linked_episodes, -1)

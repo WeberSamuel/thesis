@@ -11,3 +11,6 @@ sub_algorithm:
 exploration:
   algorithm: null
   policy: null
+exploration_sub_algorithm:
+  algorithm: null
+  policy: null

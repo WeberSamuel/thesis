@@ -33,6 +33,7 @@ class HasSubAlgorithm:
         )
 
     def _setup_model(self) -> None:
+        self._setup_sub_algorithm()
         self.policy_kwargs.setdefault("sub_policy", self.sub_algorithm.policy)
         super()._setup_model()
         self.sub_algorithm.replay_buffer = self.replay_buffer

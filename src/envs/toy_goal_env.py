@@ -86,7 +86,7 @@ class ToyGoalEnv(MetaMixin, Env[np.ndarray, np.ndarray]):
         return obs, reward, False, False, info
 
     def _get_info(self):
-        return {"goal": self.goal, "goal_idx": self.goal_idx, "task": self.task}
+        return self.add_meta_info({})
 
     def _get_obs(self):
         return np.copy(self.state)

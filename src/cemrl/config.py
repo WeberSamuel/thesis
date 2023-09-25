@@ -11,7 +11,6 @@ class EncoderConfig:
     complexity: float = 40.0
     preprocessed_state_size: int = 0
     use_simplified_state_preprocessor: bool = False
-    lr: float = 1e-3
 
 
 @dataclass
@@ -21,8 +20,8 @@ class DecoderConfig:
     use_next_state_for_reward: bool = True
     num_layers: int = 2
     activation: type[th.nn.Module] = th.nn.ReLU
-    lr: float = 1e-3
     ensemble_size: int = 1
+
 
 class TaskInferenceTrainingConfig:
     use_state_diff: bool = False
@@ -34,6 +33,7 @@ class TaskInferenceTrainingConfig:
     beta_kl_y: float = 1e-3
     optimizer_class: type[th.optim.Optimizer] = th.optim.AdamW
     prior_sigma: float = 0.5
+    lr: float = 1e-3
 
 
 @dataclass
@@ -49,8 +49,12 @@ class CemrlTrainingConfig:
     policy_gradient_steps: int = 40
     num_decoder_targets: int = 400
     encoder_context_length: int = 30
-
+    validation_frequency: int = 10
+    loss_weight_adjustment_frequency: int = 10
     imagination_horizon: int = 0
+    early_stopping_threshold: int = 20
+
+
 
 @dataclass
 class CemrlConfig:

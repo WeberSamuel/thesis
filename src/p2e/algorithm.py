@@ -1,3 +1,4 @@
+from typing import Any
 import torch as th
 from gymnasium import Env
 from stable_baselines3.common.off_policy_algorithm import OffPolicyAlgorithm
@@ -22,6 +23,8 @@ class P2E(ExplorationAlgorithmMixin, HasSubAlgorithm, StateAwareOffPolicyAlgorit
     def __init__(
         self,
         env: Env | VecEnv,
+        sub_algorithm_class: type[OffPolicyAlgorithm],
+        sub_algorithm_kwargs: dict[str, Any] | None = None,
         policy: type[P2EPolicy] = P2EPolicy,
         learning_rate=1e-3,
         learning_starts=1024,
@@ -37,6 +40,8 @@ class P2E(ExplorationAlgorithmMixin, HasSubAlgorithm, StateAwareOffPolicyAlgorit
             gradient_steps=gradient_steps,
             train_freq=train_freq,
             support_multi_env=True,
+            sub_algorithm_class=sub_algorithm_class,
+            sub_algorithm_kwargs=sub_algorithm_kwargs,
             **kwargs,
             sde_support=False,
         )
@@ -58,6 +63,7 @@ class P2E(ExplorationAlgorithmMixin, HasSubAlgorithm, StateAwareOffPolicyAlgorit
         self.sub_algorithm = self.sub_algorithm_class("MultiInputPolicy", wrapper, buffer_size=0, **self.sub_algorithm_kwargs)
 
     def train(self, gradient_steps: int, batch_size: int) -> None:
+        self.policy.set_training_mode(True)
         state_loss, reward_loss = th.zeros(2)
         for _ in range(gradient_steps):
             enc_samples, dec_samples = self.replay_buffer.cemrl_sample(batch_size)
@@ -65,7 +71,7 @@ class P2E(ExplorationAlgorithmMixin, HasSubAlgorithm, StateAwareOffPolicyAlgorit
             task_encoding = self.policy.task_inference.encoder.sample_z(
                 y_distribution, z_distributions, y_usage="most_likely"
             )[1]
-            task_encoding = task_encoding[:, None].detach()
+            task_encoding = task_encoding[:, None].expand(-1, dec_samples.actions.shape[1], -1).detach()
             if self.policy.one_step_models is not None and not self.policy.config.use_world_model_as_ensemble:
                 if self.policy.config.use_ground_truth_as_one_step_target:
                     state_target = dec_samples.next_observations
@@ -79,11 +85,11 @@ class P2E(ExplorationAlgorithmMixin, HasSubAlgorithm, StateAwareOffPolicyAlgorit
                     reward_target = reward_estimate
 
                 state_estimate, reward_estimate = self.policy.one_step_models(
-                    th.cat([dec_samples.observations, dec_samples.actions, task_encoding], dim=-1)
+                    dec_samples.observations, dec_samples.actions, None, z=task_encoding, return_raw=True
                 )
 
-                state_loss = th.nn.functional.mse_loss(state_estimate, state_target)
-                reward_loss = th.nn.functional.mse_loss(reward_estimate, reward_target)
+                state_loss = th.nn.functional.mse_loss(state_estimate, state_target[None].expand_as(state_estimate))
+                reward_loss = th.nn.functional.mse_loss(reward_estimate, reward_target[None].expand_as(reward_estimate))
                 self.policy.optimizer.zero_grad()
                 (state_loss + reward_loss).backward()
                 self.policy.optimizer.step()
@@ -105,3 +111,5 @@ class P2E(ExplorationAlgorithmMixin, HasSubAlgorithm, StateAwareOffPolicyAlgorit
         )  # type: ignore
         self.sub_algorithm.replay_buffer = self.replay_buffer
         self.sub_algorithm.train(self.gradient_steps, batch_size)
+
+        super().dump_logs_if_neccessary()
